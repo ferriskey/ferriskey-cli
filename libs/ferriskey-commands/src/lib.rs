@@ -3,7 +3,9 @@ mod context;
 mod realm;
 mod user;
 
-pub use self::client::{ClientCommand, ClientListArgs, ClientSubcommand};
+pub use self::client::{
+    ClientCommand, ClientCreateArgs, ClientListArgs, ClientSubcommand, ClientType,
+};
 pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,
 };

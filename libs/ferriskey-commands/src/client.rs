@@ -1,4 +1,4 @@
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 /// Manage OAuth2 clients.
 #[derive(Debug, Args)]
@@ -46,9 +46,40 @@ pub struct ClientCreateArgs {
     /// Client name.
     pub name: String,
 
-    /// Realm name.
+    /// Client identifier. Defaults to the client name.
+    #[arg(long = "client-id")]
+    pub client_id: Option<String>,
+
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
+
+    /// Client type.
+    #[arg(long = "type", value_enum, default_value_t = ClientType::Public)]
+    pub client_type: ClientType,
+
+    /// Whether the client is enabled.
+    #[arg(long, default_value_t = false)]
+    pub enabled: bool,
+
+    /// Protocol used by the client.
+    #[arg(long, default_value = "openid-connect")]
+    pub protocol: String,
+
+    /// Whether direct access grants are enabled.
+    #[arg(long = "direct-access-grants", default_value_t = false)]
+    pub direct_access_grants_enabled: bool,
+}
+
+/// Supported client types.
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ClientType {
+    /// Public client.
+    Public,
+    /// Confidential client.
+    Confidential,
+    /// System client.
+    System,
 }
 
 /// Arguments for deleting a client.
