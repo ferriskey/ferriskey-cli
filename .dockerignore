@@ -1,0 +1,19 @@
+# docker
+.dockerignore
+Dockerfile
+docker-compose.yaml
+
+# git
+/.git
+.gitignore
+
+# github
+/.github
+
+*.md
+LICENSE
+
+# rust
+target
+**/target
+**/node_modules
