@@ -1,0 +1,19 @@
+[package]
+name = "ferriskey"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[workspace]
+members = ["libs/ferriskey-client", "libs/ferriskey-commands", "libs/ferriskey-cli-core"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["nathaelb <pro.nathaelbonnal@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+ferriskey-commands = { path = "libs/ferriskey-commands" }
+ferriskey-cli-core = { path = "libs/ferriskey-cli-core" }

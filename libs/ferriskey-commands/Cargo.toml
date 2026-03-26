@@ -1,0 +1,11 @@
+[package]
+name = "ferriskey-commands"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }

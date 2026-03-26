@@ -1,0 +1,8 @@
+.vscode
+.idea
+/target
+**/target
+.env
+*.key*
+.DS_Store
+**/.DS_Store

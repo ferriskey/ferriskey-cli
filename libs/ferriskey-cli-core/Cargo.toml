@@ -1,0 +1,20 @@
+[package]
+name = "ferriskey-cli-core"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+ferriskey-client = { path = "../ferriskey-client" }
+ferriskey-commands = { path = "../ferriskey-commands" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+thiserror = "2.0"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.20"
