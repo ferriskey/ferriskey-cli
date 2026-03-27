@@ -18,7 +18,7 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
+  package: write
 
 jobs:
   build:
