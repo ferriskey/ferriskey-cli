@@ -1,0 +1,87 @@
+name: crates-io
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v5
+
+      - name: set up rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: verify tag matches crate version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(cargo pkgid -p ferriskey | sed 's/.*#.*://')"
+          if [[ "$expected" != "$actual" ]]; then
+            echo "tag version '$expected' does not match Cargo version '$actual'" >&2
+            exit 1
+          fi
+
+      - name: run checks
+        run: |
+          cargo test --workspace
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: publish crates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_if_needed() {
+            local crate="$1"
+            local version="$2"
+
+            if curl -fsS "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1; then
+              echo "${crate}@${version} already published"
+              return 0
+            fi
+
+            cargo publish -p "${crate}" --locked
+          }
+
+          wait_for_crate() {
+            local crate="$1"
+            local version="$2"
+
+            for _ in $(seq 1 30); do
+              if curl -fsS "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "crate ${crate}@${version} was not visible on crates.io in time" >&2
+            exit 1
+          }
+
+          version="${GITHUB_REF_NAME#v}"
+
+          publish_if_needed ferriskey-commands "${version}"
+          wait_for_crate ferriskey-commands "${version}"
+
+          publish_if_needed ferriskey-client "${version}"
+          wait_for_crate ferriskey-client "${version}"
+
+          publish_if_needed ferriskey-cli-core "${version}"
+          wait_for_crate ferriskey-cli-core "${version}"
+
+          publish_if_needed ferriskey "${version}"
