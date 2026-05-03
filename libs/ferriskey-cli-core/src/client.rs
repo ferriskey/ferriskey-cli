@@ -1,8 +1,9 @@
 use ferriskey_client::{
-    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
+    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient,
+    FerriskeyClientError,
 };
 use ferriskey_commands::{
-    ClientCommand, ClientCreateArgs, ClientListArgs, ClientSubcommand, ClientType,
+    ClientCommand, ClientCreateArgs, ClientGetArgs, ClientListArgs, ClientSubcommand, ClientType,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -14,12 +15,19 @@ type Result<T> = std::result::Result<T, ClientCommandError>;
 pub fn run(
     output_format: &str,
     context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
     command: ClientCommand,
 ) -> Result<()> {
     match command.command {
-        ClientSubcommand::List(args) => list_clients(output_format, context_override, args),
-        ClientSubcommand::Get(_) => Err(ClientCommandError::Unimplemented("client get")),
-        ClientSubcommand::Create(args) => create_client(output_format, context_override, args),
+        ClientSubcommand::List(args) => {
+            list_clients(output_format, context_override, inline_context, args)
+        }
+        ClientSubcommand::Get(args) => {
+            get_client(output_format, context_override, inline_context, args)
+        }
+        ClientSubcommand::Create(args) => {
+            create_client(output_format, context_override, inline_context, args)
+        }
         ClientSubcommand::Delete(_) => Err(ClientCommandError::Unimplemented("client delete")),
     }
 }
@@ -32,6 +40,8 @@ pub enum ClientCommandError {
     Api(#[from] FerriskeyClientError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
+    #[error("client '{0}' not found")]
+    ClientNotFound(String),
     #[error("no active context is configured")]
     NoActiveContext,
     #[error(
@@ -62,6 +72,19 @@ struct ClientView {
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
+struct ClientDetailView {
+    id: String,
+    client_id: String,
+    name: String,
+    realm: String,
+    enabled: bool,
+    protocol: String,
+    public_client: bool,
+    service_accounts_enabled: bool,
+    direct_access_grants_enabled: bool,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
 struct CreatedClientView {
     id: String,
     client_id: String,
@@ -75,14 +98,35 @@ struct CreatedClientView {
     protocol: String,
 }
 
+fn get_client(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: ClientGetArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm.clone())?;
+    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
+    let token = auth_client.exchange_client_credentials(
+        realm.as_str(),
+        context.client_id.as_str(),
+        context.client_secret.as_str(),
+    )?;
+    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let result = client
+        .get_client(&realm, &args.client_id)?
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+
+    render_client_detail(output_format, to_detail_view(result, realm))
+}
+
 fn list_clients(
     output_format: &str,
     context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
     args: ClientListArgs,
 ) -> Result<()> {
-    let repository = FileContextRepository::new()?;
-    let store = repository.load()?;
-    let context = select_context(&store, context_override)?;
+    let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
     let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
     let token = auth_client.exchange_client_credentials(
@@ -100,11 +144,10 @@ fn list_clients(
 fn create_client(
     output_format: &str,
     context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
     args: ClientCreateArgs,
 ) -> Result<()> {
-    let repository = FileContextRepository::new()?;
-    let store = repository.load()?;
-    let context = select_context(&store, context_override)?;
+    let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
     let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
     let token = auth_client.exchange_client_credentials(
@@ -117,6 +160,18 @@ fn create_client(
     let created = client.create_client(&realm, &request)?;
 
     render_created_client(output_format, to_created_view(created, realm, request))
+}
+
+fn resolve_context(
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+) -> Result<StoredContext> {
+    if let Some(ctx) = inline_context {
+        return Ok(ctx);
+    }
+    let repository = FileContextRepository::new()?;
+    let store = repository.load()?;
+    select_context(&store, context_override)
 }
 
 fn select_context(store: &ContextStore, context_override: Option<&str>) -> Result<StoredContext> {
@@ -146,6 +201,59 @@ fn to_view(client: ClientRepresentation) -> ClientView {
         id: client.id.unwrap_or_default(),
         client_id: client.client_id.unwrap_or_default(),
         name: client.name.unwrap_or_default(),
+    }
+}
+
+fn to_detail_view(client: ClientRepresentation, realm: String) -> ClientDetailView {
+    ClientDetailView {
+        id: client.id.unwrap_or_default(),
+        client_id: client.client_id.unwrap_or_default(),
+        name: client.name.unwrap_or_default(),
+        realm,
+        enabled: client.enabled.unwrap_or(false),
+        protocol: client.protocol.unwrap_or_default(),
+        public_client: client.public_client.unwrap_or(false),
+        service_accounts_enabled: client.service_accounts_enabled.unwrap_or(false),
+        direct_access_grants_enabled: client.direct_access_grants_enabled.unwrap_or(false),
+    }
+}
+
+fn render_client_detail(output_format: &str, client: ClientDetailView) -> Result<()> {
+    match output_format {
+        "table" => {
+            println!("id: {}", client.id);
+            println!("client_id: {}", client.client_id);
+            println!("name: {}", client.name);
+            println!("realm: {}", client.realm);
+            println!("enabled: {}", client.enabled);
+            println!("protocol: {}", client.protocol);
+            println!("public_client: {}", client.public_client);
+            println!("service_accounts_enabled: {}", client.service_accounts_enabled);
+            println!(
+                "direct_access_grants_enabled: {}",
+                client.direct_access_grants_enabled
+            );
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&client)
+                    .map_err(|source| ClientCommandError::SerializeJson { source })?
+            );
+            Ok(())
+        }
+        "yaml" => {
+            println!(
+                "{}",
+                serde_yaml::to_string(&client)
+                    .map_err(|source| ClientCommandError::SerializeYaml { source })?
+            );
+            Ok(())
+        }
+        _ => Err(ClientCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
     }
 }
 

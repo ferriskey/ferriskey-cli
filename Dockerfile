@@ -1,37 +1,24 @@
-FROM rust:1.91.1-bookworm AS rust-build
+FROM rust:1.95.0-bookworm AS chef
 
 WORKDIR /usr/local/src/ferriskey
 
-COPY Cargo.toml Cargo.lock ./
-COPY libs/ferriskey-cli-core/Cargo.toml ./libs/ferriskey-cli-core/
-COPY libs/ferriskey-client/Cargo.toml ./libs/ferriskey-client/
-COPY libs/ferriskey-commands/Cargo.toml ./libs/ferriskey-commands/
+RUN cargo install cargo-chef --version 0.1.77 --locked
+
+FROM chef AS planner
+
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+
+COPY --from=planner /usr/local/src/ferriskey/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+COPY . .
+RUN cargo build --release
 
 
-
-RUN \
-  mkdir -p src libs/ferriskey-cli-core/src libs/ferriskey-client/src libs/ferriskey-commands/src && \
-  touch libs/ferriskey-cli-core/src/lib.rs && \
-  touch libs/ferriskey-client/src/lib.rs && \
-  touch libs/ferriskey-commands/src/lib.rs && \
-  echo "fn main() {}" > src/main.rs && \
-  cargo build --release
-
-COPY libs/ferriskey-cli-core libs/ferriskey-cli-core
-COPY libs/ferriskey-client libs/ferriskey-client
-COPY libs/ferriskey-commands libs/ferriskey-commands
-
-COPY src src
-
-RUN \
-
-  touch libs/ferriskey-cli-core/src/lib.rs && \
-  touch libs/ferriskey-client/src/lib.rs && \
-  touch libs/ferriskey-commands/src/lib.rs && \
-  touch src/main.rs && \
-  cargo build --release
-
-FROM debian:bookworm-slim AS cli
+FROM debian:bookworm-slim AS runtime
 
 RUN \
     apt-get update && \
@@ -53,10 +40,8 @@ RUN \
 
 USER ferriskey
 
-FROM runtime AS api
+FROM runtime AS cli
 
-COPY --from=rust-build /usr/local/src/ferriskey/target/release/ferriskey /usr/local/bin/
-
-EXPOSE 80
+COPY --from=builder /usr/local/src/ferriskey/target/release/ferriskey /usr/local/bin/
 
 ENTRYPOINT ["ferriskey"]

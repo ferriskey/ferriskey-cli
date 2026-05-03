@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod context;
 
+use config::StoredContext;
 use ferriskey_commands::{Cli, Commands};
 use thiserror::Error;
 
@@ -18,14 +19,28 @@ pub enum CliCoreError {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
+    let inline_context = build_inline_context(&cli);
     match cli.command {
         Commands::Context(command) => Ok(context::run(cli.output.as_str(), command)?),
         Commands::Realm(_) => Err(CliCoreError::UnimplementedCommand("realm")),
         Commands::Client(command) => Ok(client::run(
             cli.output.as_str(),
             cli.context.as_deref(),
+            inline_context,
             command,
         )?),
         Commands::User(_) => Err(CliCoreError::UnimplementedCommand("user")),
+    }
+}
+
+fn build_inline_context(cli: &Cli) -> Option<StoredContext> {
+    match (&cli.url, &cli.client_id, &cli.client_secret) {
+        (Some(url), Some(client_id), Some(client_secret)) => Some(StoredContext {
+            url: url.clone(),
+            client_id: client_id.clone(),
+            client_secret: client_secret.clone(),
+            realm: cli.realm.clone(),
+        }),
+        _ => None,
     }
 }

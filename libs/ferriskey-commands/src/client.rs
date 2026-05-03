@@ -35,9 +35,9 @@ pub struct ClientGetArgs {
     /// Client identifier.
     pub client_id: String,
 
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 }
 
 /// Arguments for creating a client.
@@ -88,7 +88,7 @@ pub struct ClientDeleteArgs {
     /// Client identifier.
     pub client_id: String,
 
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 }
