@@ -2,12 +2,13 @@ name: docker
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    tags:
+      - v*.*.*
+      - v*.*.*-rc*
   pull_request:
-    branches: [ main ]
-  tags:
-    - v*.*.*
-    - v*.*.*-rc*
+    branches: [main]
+
   workflow_dispatch:
     inputs:
       push:
@@ -57,7 +58,8 @@ jobs:
           images: ghcr.io/ferriskey/ferriskey-${{ matrix.target }}
 
       - name: log-in to ghcr
-        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch
+        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name ==
+          github.event.repository.default_branch
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -75,18 +77,22 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=${{ runner.temp }}/.buildx-cache
           cache-to: type=local,dest=${{ runner.temp }}/.buildx-cache-new,mode=max
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=${{ inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=${{ inputs.push
+            || startsWith(github.ref, 'refs/tags/v') || github.ref_name ==
+            github.event.repository.default_branch }}
 
       - name: prepare digest
         id: digest
-        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch
+        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name ==
+          github.event.repository.default_branch
         run: |
           mkdir -p ${{ runner.temp }}/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: upload digest
-        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch
+        if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name ==
+          github.event.repository.default_branch
         uses: actions/upload-artifact@v4
         with:
           name: digests-${{ runner.arch }}-${{ matrix.target }}
@@ -102,7 +108,8 @@ jobs:
           mv ${{ runner.temp }}/.buildx-cache-new ${{ runner.temp }}/.buildx-cache
 
   push-manifest:
-    if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name == github.event.repository.default_branch
+    if: inputs.push || startsWith(github.ref, 'refs/tags/v') || github.ref_name ==
+      github.event.repository.default_branch
     needs:
       - build
     runs-on: ubuntu-latest
