@@ -258,3 +258,72 @@ fn render_message(output_format: &str, message: &str) -> Result<()> {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StoredContext;
+    use ferriskey_client::Realm;
+
+    fn make_context(realm: Option<&str>) -> StoredContext {
+        StoredContext {
+            url: "http://localhost:3333".to_owned(),
+            client_id: "cli".to_owned(),
+            client_secret: "secret".to_owned(),
+            realm: realm.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn auth_client_requires_realm_on_context() {
+        let context = make_context(None);
+        let err = auth_client(&context).expect_err("missing realm should error");
+        assert!(matches!(err, RealmCommandError::MissingAuthRealm));
+    }
+
+    #[test]
+    fn to_view_maps_id_and_name() {
+        let realm = Realm {
+            id: "abc-123".to_owned(),
+            name: "master".to_owned(),
+        };
+        let view = to_view(realm);
+        assert_eq!(view.id, "abc-123");
+        assert_eq!(view.name, "master");
+    }
+
+    #[test]
+    fn render_realm_list_table_succeeds() {
+        let realms = vec![
+            RealmView {
+                id: "abc".to_owned(),
+                name: "master".to_owned(),
+            },
+            RealmView {
+                id: "def-long-id".to_owned(),
+                name: "dev".to_owned(),
+            },
+        ];
+        assert!(render_realm_list("table", &realms).is_ok());
+    }
+
+    #[test]
+    fn render_realm_list_table_empty_succeeds() {
+        assert!(render_realm_list("table", &[]).is_ok());
+    }
+
+    #[test]
+    fn render_realm_list_json_succeeds() {
+        let realms = vec![RealmView {
+            id: "abc".to_owned(),
+            name: "master".to_owned(),
+        }];
+        assert!(render_realm_list("json", &realms).is_ok());
+    }
+
+    #[test]
+    fn render_realm_list_rejects_unknown_format() {
+        let err = render_realm_list("xml", &[]).expect_err("unknown format should error");
+        assert!(matches!(err, RealmCommandError::UnsupportedOutputFormat(_)));
+    }
+}

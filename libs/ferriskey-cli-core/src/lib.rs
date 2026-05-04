@@ -20,8 +20,6 @@ pub enum CliCoreError {
     Realm(#[from] realm::RealmCommandError),
     #[error(transparent)]
     User(#[from] user::UserCommandError),
-    #[error("command '{0}' is not implemented yet")]
-    UnimplementedCommand(&'static str),
 }
 
 pub fn run(cli: Cli) -> Result<()> {

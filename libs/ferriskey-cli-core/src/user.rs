@@ -307,3 +307,100 @@ fn render_message(output_format: &str, message: &str) -> Result<()> {
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StoredContext;
+    use ferriskey_client::UserRepresentation;
+
+    fn make_context(realm: Option<&str>) -> StoredContext {
+        StoredContext {
+            url: "http://localhost:3333".to_owned(),
+            client_id: "cli".to_owned(),
+            client_secret: "secret".to_owned(),
+            realm: realm.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn resolve_realm_prefers_explicit_argument() {
+        let context = make_context(Some("master"));
+        let realm = resolve_realm(&context, Some("other".to_owned())).expect("resolved");
+        assert_eq!(realm, "other");
+    }
+
+    #[test]
+    fn resolve_realm_falls_back_to_context_default() {
+        let context = make_context(Some("master"));
+        let realm = resolve_realm(&context, None).expect("resolved");
+        assert_eq!(realm, "master");
+    }
+
+    #[test]
+    fn resolve_realm_errors_when_missing_everywhere() {
+        let context = make_context(None);
+        let err = resolve_realm(&context, None).expect_err("realm should be required");
+        assert!(matches!(err, UserCommandError::MissingRealm));
+    }
+
+    #[test]
+    fn to_view_fills_optional_fields_with_defaults() {
+        let user = UserRepresentation {
+            id: "uuid-123".to_owned(),
+            username: "alice".to_owned(),
+            firstname: None,
+            lastname: None,
+            email: None,
+            enabled: true,
+        };
+        let view = to_view(user);
+        assert_eq!(view.id, "uuid-123");
+        assert_eq!(view.username, "alice");
+        assert_eq!(view.firstname, "");
+        assert_eq!(view.lastname, "");
+        assert_eq!(view.email, "");
+        assert!(view.enabled);
+    }
+
+    #[test]
+    fn to_view_preserves_present_fields() {
+        let user = UserRepresentation {
+            id: "uuid-456".to_owned(),
+            username: "bob".to_owned(),
+            firstname: Some("Bob".to_owned()),
+            lastname: Some("Smith".to_owned()),
+            email: Some("bob@example.com".to_owned()),
+            enabled: false,
+        };
+        let view = to_view(user);
+        assert_eq!(view.firstname, "Bob");
+        assert_eq!(view.lastname, "Smith");
+        assert_eq!(view.email, "bob@example.com");
+        assert!(!view.enabled);
+    }
+
+    #[test]
+    fn render_user_list_table_succeeds() {
+        let users = vec![UserView {
+            id: "uuid-1".to_owned(),
+            username: "alice".to_owned(),
+            firstname: "Alice".to_owned(),
+            lastname: "Wonder".to_owned(),
+            email: "alice@example.com".to_owned(),
+            enabled: true,
+        }];
+        assert!(render_user_list("table", &users).is_ok());
+    }
+
+    #[test]
+    fn render_user_list_table_empty_succeeds() {
+        assert!(render_user_list("table", &[]).is_ok());
+    }
+
+    #[test]
+    fn render_user_list_rejects_unknown_format() {
+        let err = render_user_list("xml", &[]).expect_err("unknown format should error");
+        assert!(matches!(err, UserCommandError::UnsupportedOutputFormat(_)));
+    }
+}

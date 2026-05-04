@@ -62,8 +62,6 @@ pub enum ClientCommandError {
         #[source]
         source: serde_yaml::Error,
     },
-    #[error("command '{0}' is not implemented yet")]
-    Unimplemented(&'static str),
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
