@@ -17,27 +17,27 @@ use clap::{Parser, Subcommand};
 #[command(name = "ferriskey", about = "FerrisKey CLI")]
 pub struct Cli {
     /// Override the active context for this command.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub context: Option<String>,
 
     /// Output format.
-    #[arg(long, short = 'o', value_parser = ["table", "json", "yaml"], default_value = "table")]
+    #[arg(long, short = 'o', global = true, value_parser = ["table", "json", "yaml"], default_value = "table")]
     pub output: String,
 
     /// FerrisKey server URL (overrides context file).
-    #[arg(long, env = "FERRISKEY_URL")]
+    #[arg(long, global = true, env = "FERRISKEY_URL")]
     pub url: Option<String>,
 
     /// Client ID used for authentication (overrides context file).
-    #[arg(long, env = "FERRISKEY_CLIENT_ID")]
+    #[arg(long, global = true, env = "FERRISKEY_CLIENT_ID")]
     pub client_id: Option<String>,
 
     /// Client secret used for authentication (overrides context file).
-    #[arg(long, env = "FERRISKEY_CLIENT_SECRET")]
+    #[arg(long, global = true, env = "FERRISKEY_CLIENT_SECRET")]
     pub client_secret: Option<String>,
 
     /// Default realm (overrides context file).
-    #[arg(long, env = "FERRISKEY_REALM")]
+    #[arg(long, global = true, env = "FERRISKEY_REALM")]
     pub realm: Option<String>,
 
     /// Command to execute.
