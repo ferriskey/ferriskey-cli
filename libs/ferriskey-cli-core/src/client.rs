@@ -1,6 +1,5 @@
 use ferriskey_client::{
-    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient,
-    FerriskeyClientError,
+    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
 };
 use ferriskey_commands::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
@@ -119,9 +118,14 @@ fn delete_client(
     let found = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
-    let uuid = found.id.unwrap_or_default();
+    let uuid = found
+        .id
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
     client.delete_client(&realm, &uuid)?;
-    render_message(output_format, &format!("client '{}' deleted", args.client_id))
+    render_message(
+        output_format,
+        &format!("client '{}' deleted", args.client_id),
+    )
 }
 
 fn get_client(
@@ -254,7 +258,10 @@ fn render_client_detail(output_format: &str, client: ClientDetailView) -> Result
             println!("enabled: {}", client.enabled);
             println!("protocol: {}", client.protocol);
             println!("public_client: {}", client.public_client);
-            println!("service_accounts_enabled: {}", client.service_accounts_enabled);
+            println!(
+                "service_accounts_enabled: {}",
+                client.service_accounts_enabled
+            );
             println!(
                 "direct_access_grants_enabled: {}",
                 client.direct_access_grants_enabled
@@ -409,7 +416,11 @@ fn render_message(output_format: &str, message: &str) -> Result<()> {
             Ok(())
         }
         "json" => {
-            println!("{}", serde_json::json!({ "message": message }));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "message": message }))
+                    .map_err(|source| ClientCommandError::SerializeJson { source })?
+            );
             Ok(())
         }
         "yaml" => {
