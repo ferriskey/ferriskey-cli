@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod context;
 mod realm;
+mod user;
 
 use config::StoredContext;
 use ferriskey_commands::{Cli, Commands};
@@ -17,6 +18,8 @@ pub enum CliCoreError {
     Context(#[from] context::ContextCommandError),
     #[error(transparent)]
     Realm(#[from] realm::RealmCommandError),
+    #[error(transparent)]
+    User(#[from] user::UserCommandError),
     #[error("command '{0}' is not implemented yet")]
     UnimplementedCommand(&'static str),
 }
@@ -37,7 +40,12 @@ pub fn run(cli: Cli) -> Result<()> {
             inline_context,
             command,
         )?),
-        Commands::User(_) => Err(CliCoreError::UnimplementedCommand("user")),
+        Commands::User(command) => Ok(user::run(
+            cli.output.as_str(),
+            cli.context.as_deref(),
+            inline_context,
+            command,
+        )?),
     }
 }
 

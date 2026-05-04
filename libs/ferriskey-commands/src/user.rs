@@ -25,9 +25,9 @@ pub enum UserSubcommand {
 /// Arguments for listing users.
 #[derive(Debug, Args)]
 pub struct UserListArgs {
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 }
 
 /// Arguments for retrieving a user.
@@ -36,9 +36,9 @@ pub struct UserGetArgs {
     /// Username.
     pub username: String,
 
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 }
 
 /// Arguments for creating a user.
@@ -47,13 +47,13 @@ pub struct UserCreateArgs {
     /// Username.
     pub username: String,
 
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 
     /// User email.
     #[arg(long)]
-    pub email: String,
+    pub email: Option<String>,
 
     /// User first name.
     #[arg(long)]
@@ -70,7 +70,7 @@ pub struct UserDeleteArgs {
     /// Username.
     pub username: String,
 
-    /// Realm name.
+    /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
-    pub realm: String,
+    pub realm: Option<String>,
 }

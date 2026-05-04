@@ -11,6 +11,9 @@ pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,
 };
 pub use self::realm::{RealmCommand, RealmNameArgs, RealmSubcommand};
+pub use self::user::{
+    UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs, UserSubcommand,
+};
 use clap::{Parser, Subcommand};
 
 /// FerrisKey CLI.
