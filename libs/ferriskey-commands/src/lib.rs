@@ -9,6 +9,7 @@ pub use self::client::{
 pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,
 };
+pub use self::realm::{RealmCommand, RealmNameArgs, RealmSubcommand};
 use clap::{Parser, Subcommand};
 
 /// FerrisKey CLI.
