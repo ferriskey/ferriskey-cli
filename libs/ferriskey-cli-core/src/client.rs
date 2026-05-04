@@ -118,7 +118,7 @@ fn delete_client(
     let found = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
-<<<<<<< HEAD
+
     let uuid = found
         .id
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
@@ -127,11 +127,6 @@ fn delete_client(
         output_format,
         &format!("client '{}' deleted", args.client_id),
     )
-=======
-    let uuid = found.id.unwrap_or_default();
-    client.delete_client(&realm, &uuid)?;
-    render_message(output_format, &format!("client '{}' deleted", args.client_id))
->>>>>>> f51dda6 (feat: implement delete client)
 }
 
 fn get_client(
