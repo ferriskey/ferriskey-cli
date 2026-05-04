@@ -4,7 +4,8 @@ mod realm;
 mod user;
 
 pub use self::client::{
-    ClientCommand, ClientCreateArgs, ClientGetArgs, ClientListArgs, ClientSubcommand, ClientType,
+    ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
+    ClientSubcommand, ClientType,
 };
 pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,

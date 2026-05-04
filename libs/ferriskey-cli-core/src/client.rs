@@ -1,9 +1,9 @@
 use ferriskey_client::{
-    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient,
-    FerriskeyClientError,
+    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
 };
 use ferriskey_commands::{
-    ClientCommand, ClientCreateArgs, ClientGetArgs, ClientListArgs, ClientSubcommand, ClientType,
+    ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
+    ClientSubcommand, ClientType,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -28,7 +28,9 @@ pub fn run(
         ClientSubcommand::Create(args) => {
             create_client(output_format, context_override, inline_context, args)
         }
-        ClientSubcommand::Delete(_) => Err(ClientCommandError::Unimplemented("client delete")),
+        ClientSubcommand::Delete(args) => {
+            delete_client(output_format, context_override, inline_context, args)
+        }
     }
 }
 
@@ -96,6 +98,34 @@ struct CreatedClientView {
     direct_access_grants_enabled: bool,
     service_account_enabled: bool,
     protocol: String,
+}
+
+fn delete_client(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: ClientDeleteArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm.clone())?;
+    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
+    let token = auth_client.exchange_client_credentials(
+        realm.as_str(),
+        context.client_id.as_str(),
+        context.client_secret.as_str(),
+    )?;
+    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let found = client
+        .get_client(&realm, &args.client_id)?
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+    let uuid = found
+        .id
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+    client.delete_client(&realm, &uuid)?;
+    render_message(
+        output_format,
+        &format!("client '{}' deleted", args.client_id),
+    )
 }
 
 fn get_client(
@@ -228,7 +258,10 @@ fn render_client_detail(output_format: &str, client: ClientDetailView) -> Result
             println!("enabled: {}", client.enabled);
             println!("protocol: {}", client.protocol);
             println!("public_client: {}", client.public_client);
-            println!("service_accounts_enabled: {}", client.service_accounts_enabled);
+            println!(
+                "service_accounts_enabled: {}",
+                client.service_accounts_enabled
+            );
             println!(
                 "direct_access_grants_enabled: {}",
                 client.direct_access_grants_enabled
@@ -366,6 +399,34 @@ fn render_created_client(output_format: &str, client: CreatedClientView) -> Resu
             println!(
                 "{}",
                 serde_yaml::to_string(&client)
+                    .map_err(|source| ClientCommandError::SerializeYaml { source })?
+            );
+            Ok(())
+        }
+        _ => Err(ClientCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
+fn render_message(output_format: &str, message: &str) -> Result<()> {
+    match output_format {
+        "table" => {
+            println!("{message}");
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "message": message }))
+                    .map_err(|source| ClientCommandError::SerializeJson { source })?
+            );
+            Ok(())
+        }
+        "yaml" => {
+            println!(
+                "{}",
+                serde_yaml::to_string(&serde_json::json!({ "message": message }))
                     .map_err(|source| ClientCommandError::SerializeYaml { source })?
             );
             Ok(())
