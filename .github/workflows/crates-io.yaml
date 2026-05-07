@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="${GITHUB_REF_NAME#v}"
-          actual="$(cargo pkgid -p ferris-ctl | sed 's/.*#.*://')"
+          actual="$(cargo pkgid -p ferris-ctl | awk -F'[@:]' '{print $NF}')"
           if [[ "$expected" != "$actual" ]]; then
             echo "tag version '$expected' does not match Cargo version '$actual'" >&2
             exit 1
