@@ -61,7 +61,7 @@ jobs:
 
           version="${GITHUB_REF_NAME#v}"
 
-          publish_if_needed ferriskey-commands "${version}"
-          publish_if_needed ferriskey-client "${version}"
+          publish_if_needed ferriskey-cli-commands "${version}"
+          publish_if_needed ferriskey-cli-client "${version}"
           publish_if_needed ferriskey-cli-core "${version}"
           publish_if_needed ferris-ctl "${version}"
