@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 
 /// FerrisKey CLI.
 #[derive(Debug, Parser)]
-#[command(name = "ferriskey", about = "FerrisKey CLI")]
+#[command(name = "ferris-ctl", about = "FerrisKey CLI")]
 pub struct Cli {
     /// Override the active context for this command.
     #[arg(long, global = true)]

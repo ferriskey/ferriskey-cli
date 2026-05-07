@@ -15,7 +15,7 @@ cargo test -p ferriskey-cli-core context::tests  # Run a specific test module
 
 This is a Cargo workspace with 4 crates:
 
-- **`ferriskey`** (root) — Binary entry point. Parses CLI with `Cli::parse()`, passes to `ferriskey_cli_core::run()`.
+- **`ferris-ctl`** (root) — Binary entry point. Parses CLI with `Cli::parse()`, passes to `ferriskey_cli_core::run()`.
 - **`libs/ferriskey-commands`** — Clap derive structs only. Defines `Cli`, `Commands` enum, and per-command `*Command`/`*Args` structs. No logic.
 - **`libs/ferriskey-cli-core`** — Command dispatch and execution. `run()` matches on `Commands` variants and delegates to module handlers (`context.rs`, `client.rs`). Owns config management.
 - **`libs/ferriskey-client`** — `reqwest`-based HTTP client. `FerriskeyClient::new(base_url, prefix, token)` handles auth (Bearer token), request serialization, and response parsing.

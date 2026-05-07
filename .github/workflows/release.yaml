@@ -58,11 +58,11 @@ jobs:
 
       - name: build (cross)
         if: matrix.cross
-        run: cross build --release --locked --target ${{ matrix.target }} -p ferriskey
+        run: cross build --release --locked --target ${{ matrix.target }} -p ferris-ctl
 
       - name: build (native)
         if: "!matrix.cross"
-        run: cargo build --release --locked --target ${{ matrix.target }} -p ferriskey
+        run: cargo build --release --locked --target ${{ matrix.target }} -p ferris-ctl
 
       - name: resolve tag name
         id: tag
@@ -78,16 +78,16 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
         run: |
-          archive="ferriskey-${{ steps.tag.outputs.name }}-${{ matrix.target }}.tar.gz"
-          tar -C "target/${{ matrix.target }}/release" -czf "${archive}" ferriskey
+          archive="ferris-ctl-${{ steps.tag.outputs.name }}-${{ matrix.target }}.tar.gz"
+          tar -C "target/${{ matrix.target }}/release" -czf "${archive}" ferris-ctl
           echo "ASSET=${archive}" >> "$GITHUB_ENV"
 
       - name: package (windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $archive = "ferriskey-${{ steps.tag.outputs.name }}-${{ matrix.target }}.zip"
-          Compress-Archive -Path "target/${{ matrix.target }}/release/ferriskey.exe" -DestinationPath $archive
+          $archive = "ferris-ctl-${{ steps.tag.outputs.name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/ferris-ctl.exe" -DestinationPath $archive
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: upload artifact

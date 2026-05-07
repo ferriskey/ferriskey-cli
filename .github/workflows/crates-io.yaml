@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="${GITHUB_REF_NAME#v}"
-          actual="$(cargo pkgid -p ferriskey | sed 's/.*#.*://')"
+          actual="$(cargo pkgid -p ferris-ctl | sed 's/.*#.*://')"
           if [[ "$expected" != "$actual" ]]; then
             echo "tag version '$expected' does not match Cargo version '$actual'" >&2
             exit 1
@@ -85,4 +85,4 @@ jobs:
           publish_if_needed ferriskey-cli-core "${version}"
           wait_for_crate ferriskey-cli-core "${version}"
 
-          publish_if_needed ferriskey "${version}"
+          publish_if_needed ferris-ctl "${version}"

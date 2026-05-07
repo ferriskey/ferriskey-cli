@@ -1,12 +1,12 @@
-# FerrisKey CLI
+# ferris-ctl
 
 Official CLI for FerrisKey IAM.
 
 ## Install
 
-cargo install ferriskey-cli
+cargo install ferris-ctl
 
 ## Usage
 
-ferriskey realm list
-ferriskey realm create myrealm
+ferris-ctl realm list
+ferris-ctl realm create myrealm

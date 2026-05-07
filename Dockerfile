@@ -42,6 +42,6 @@ USER ferriskey
 
 FROM runtime AS cli
 
-COPY --from=builder /usr/local/src/ferriskey/target/release/ferriskey /usr/local/bin/
+COPY --from=builder /usr/local/src/ferriskey/target/release/ferris-ctl /usr/local/bin/
 
-ENTRYPOINT ["ferriskey"]
+ENTRYPOINT ["ferris-ctl"]
