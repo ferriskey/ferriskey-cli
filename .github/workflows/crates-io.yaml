@@ -59,30 +59,9 @@ jobs:
             cargo publish -p "${crate}" --locked
           }
 
-          wait_for_crate() {
-            local crate="$1"
-            local version="$2"
-
-            for _ in $(seq 1 30); do
-              if curl -fsS "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null 2>&1; then
-                return 0
-              fi
-              sleep 10
-            done
-
-            echo "crate ${crate}@${version} was not visible on crates.io in time" >&2
-            exit 1
-          }
-
           version="${GITHUB_REF_NAME#v}"
 
           publish_if_needed ferriskey-commands "${version}"
-          wait_for_crate ferriskey-commands "${version}"
-
           publish_if_needed ferriskey-client "${version}"
-          wait_for_crate ferriskey-client "${version}"
-
           publish_if_needed ferriskey-cli-core "${version}"
-          wait_for_crate ferriskey-cli-core "${version}"
-
           publish_if_needed ferris-ctl "${version}"
