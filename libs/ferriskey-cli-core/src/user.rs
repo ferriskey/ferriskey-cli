@@ -1,7 +1,7 @@
-use ferriskey_client::{
+use ferriskey_cli_client::{
     CreateUserRequest, FerriskeyClient, FerriskeyClientError, UserRepresentation,
 };
-use ferriskey_commands::{
+use ferriskey_cli_commands::{
     UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs, UserSubcommand,
 };
 use serde::Serialize;
@@ -312,7 +312,7 @@ fn render_message(output_format: &str, message: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::StoredContext;
-    use ferriskey_client::UserRepresentation;
+    use ferriskey_cli_client::UserRepresentation;
 
     fn make_context(realm: Option<&str>) -> StoredContext {
         StoredContext {

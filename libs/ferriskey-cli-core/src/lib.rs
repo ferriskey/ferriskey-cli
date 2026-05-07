@@ -5,7 +5,7 @@ mod realm;
 mod user;
 
 use config::StoredContext;
-use ferriskey_commands::{Cli, Commands};
+use ferriskey_cli_commands::{Cli, Commands};
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, CliCoreError>;

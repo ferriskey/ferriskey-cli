@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Official FerrisKey CLI"
 
 [workspace]
-members = ["libs/ferriskey-client", "libs/ferriskey-commands", "libs/ferriskey-cli-core"]
+members = ["libs/ferriskey-cli-client", "libs/ferriskey-cli-commands", "libs/ferriskey-cli-core"]
 resolver = "2"
 
 [workspace.package]
@@ -22,5 +22,5 @@ homepage = "https://ferriskey.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-ferriskey-commands = { path = "libs/ferriskey-commands", version = "0.1.0" }
+ferriskey-cli-commands = { path = "libs/ferriskey-cli-commands", version = "0.1.0" }
 ferriskey-cli-core = { path = "libs/ferriskey-cli-core", version = "0.1.0" }

@@ -1,5 +1,5 @@
 [package]
-name = "ferriskey-commands"
+name = "ferriskey-cli-commands"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

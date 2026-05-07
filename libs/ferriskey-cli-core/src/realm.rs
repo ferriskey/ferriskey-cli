@@ -1,5 +1,5 @@
-use ferriskey_client::{CreateRealmRequest, FerriskeyClient, FerriskeyClientError, Realm};
-use ferriskey_commands::{RealmCommand, RealmNameArgs, RealmSubcommand};
+use ferriskey_cli_client::{CreateRealmRequest, FerriskeyClient, FerriskeyClientError, Realm};
+use ferriskey_cli_commands::{RealmCommand, RealmNameArgs, RealmSubcommand};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -263,7 +263,7 @@ fn render_message(output_format: &str, message: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::StoredContext;
-    use ferriskey_client::Realm;
+    use ferriskey_cli_client::Realm;
 
     fn make_context(realm: Option<&str>) -> StoredContext {
         StoredContext {

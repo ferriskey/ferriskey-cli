@@ -229,26 +229,12 @@ name = "ferris-ctl"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "ferriskey-cli-commands",
  "ferriskey-cli-core",
- "ferriskey-commands",
 ]
 
 [[package]]
-name = "ferriskey-cli-core"
-version = "0.1.0"
-dependencies = [
- "ferriskey-client",
- "ferriskey-commands",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "ferriskey-client"
+name = "ferriskey-cli-client"
 version = "0.1.0"
 dependencies = [
  "reqwest",
@@ -257,10 +243,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "ferriskey-commands"
+name = "ferriskey-cli-commands"
 version = "0.1.0"
 dependencies = [
  "clap",
+]
+
+[[package]]
+name = "ferriskey-cli-core"
+version = "0.1.0"
+dependencies = [
+ "ferriskey-cli-client",
+ "ferriskey-cli-commands",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

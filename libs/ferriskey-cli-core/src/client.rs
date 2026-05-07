@@ -1,7 +1,7 @@
-use ferriskey_client::{
+use ferriskey_cli_client::{
     ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
 };
-use ferriskey_commands::{
+use ferriskey_cli_commands::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
     ClientSubcommand, ClientType,
 };

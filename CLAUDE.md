@@ -16,9 +16,9 @@ cargo test -p ferriskey-cli-core context::tests  # Run a specific test module
 This is a Cargo workspace with 4 crates:
 
 - **`ferris-ctl`** (root) — Binary entry point. Parses CLI with `Cli::parse()`, passes to `ferriskey_cli_core::run()`.
-- **`libs/ferriskey-commands`** — Clap derive structs only. Defines `Cli`, `Commands` enum, and per-command `*Command`/`*Args` structs. No logic.
+- **`libs/ferriskey-cli-commands`** — Clap derive structs only. Defines `Cli`, `Commands` enum, and per-command `*Command`/`*Args` structs. No logic.
 - **`libs/ferriskey-cli-core`** — Command dispatch and execution. `run()` matches on `Commands` variants and delegates to module handlers (`context.rs`, `client.rs`). Owns config management.
-- **`libs/ferriskey-client`** — `reqwest`-based HTTP client. `FerriskeyClient::new(base_url, prefix, token)` handles auth (Bearer token), request serialization, and response parsing.
+- **`libs/ferriskey-cli-client`** — `reqwest`-based HTTP client. `FerriskeyClient::new(base_url, prefix, token)` handles auth (Bearer token), request serialization, and response parsing.
 
 ### Data flow
 
@@ -39,7 +39,7 @@ Root-level `--output` / `-o` flag accepts `table` (default), `json`, or `yaml`. 
 
 ### Unimplemented stubs
 
-Realm and User commands are defined in `ferriskey-commands` but return `UnimplementedCommand` errors in `ferriskey-cli-core`. Client `get`/`delete` subcommands are also stubs.
+Realm and User commands are defined in `ferriskey-cli-commands` but return `UnimplementedCommand` errors in `ferriskey-cli-core`. Client `get`/`delete` subcommands are also stubs.
 
 ### OAuth2 token exchange
 

@@ -12,8 +12,8 @@ description = "Application runtime for the FerrisKey CLI"
 doctest = false
 
 [dependencies]
-ferriskey-client = { path = "../ferriskey-client", version = "0.1.0" }
-ferriskey-commands = { path = "../ferriskey-commands", version = "0.1.0" }
+ferriskey-cli-client = { path = "../ferriskey-cli-client", version = "0.1.0" }
+ferriskey-cli-commands = { path = "../ferriskey-cli-commands", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

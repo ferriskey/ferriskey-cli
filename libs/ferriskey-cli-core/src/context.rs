@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ferriskey_commands::{
+use ferriskey_cli_commands::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,
 };
 use serde::Serialize;
