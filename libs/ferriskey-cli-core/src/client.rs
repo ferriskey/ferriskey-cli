@@ -1,5 +1,5 @@
 use ferriskey_cli_client::{
-    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
+    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClientError,
 };
 use ferriskey_cli_commands::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
@@ -9,6 +9,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::config::{ConfigError, ContextStore, FileContextRepository, StoredContext};
+use crate::session::{self, SessionError};
 
 type Result<T> = std::result::Result<T, ClientCommandError>;
 
@@ -40,6 +41,8 @@ pub enum ClientCommandError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Api(#[from] FerriskeyClientError),
+    #[error(transparent)]
+    Session(#[from] SessionError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("client '{0}' not found")]
@@ -106,13 +109,7 @@ fn delete_client(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = auth_client.exchange_client_credentials(
-        realm.as_str(),
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let client = session::authenticated_client(&context, &realm)?;
     let found = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
@@ -135,13 +132,7 @@ fn get_client(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = auth_client.exchange_client_credentials(
-        realm.as_str(),
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let client = session::authenticated_client(&context, &realm)?;
     let result = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
@@ -157,13 +148,7 @@ fn list_clients(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = auth_client.exchange_client_credentials(
-        realm.as_str(),
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let client = session::authenticated_client(&context, &realm)?;
     let clients = client.list_clients(&realm)?;
     let views = clients.into_iter().map(to_view).collect::<Vec<_>>();
 
@@ -178,13 +163,7 @@ fn create_client(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let auth_client = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = auth_client.exchange_client_credentials(
-        realm.as_str(),
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    let client = FerriskeyClient::new(context.url, "", token.access_token)?;
+    let client = session::authenticated_client(&context, &realm)?;
     let request = build_create_client_request(args);
     let created = client.create_client(&realm, &request)?;
 
@@ -480,13 +459,14 @@ mod tests {
             StoredContext {
                 url: "http://localhost:3333".to_owned(),
                 client_id: "cli".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: Some("master".to_owned()),
             },
         );
         let store = ContextStore {
             current_context: Some("local".to_owned()),
             contexts,
+            ..Default::default()
         };
 
         let context = select_context(&store, None).expect("context selected");
@@ -502,7 +482,7 @@ mod tests {
             StoredContext {
                 url: "http://localhost:3333".to_owned(),
                 client_id: "cli".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: None,
             },
         );
@@ -511,13 +491,14 @@ mod tests {
             StoredContext {
                 url: "https://iam.example.com".to_owned(),
                 client_id: "ops".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: None,
             },
         );
         let store = ContextStore {
             current_context: Some("local".to_owned()),
             contexts,
+            ..Default::default()
         };
 
         let context = select_context(&store, Some("prod")).expect("context selected");
@@ -530,7 +511,7 @@ mod tests {
         let context = StoredContext {
             url: "http://localhost:3333".to_owned(),
             client_id: "cli".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: Some("master".to_owned()),
         };
 
@@ -544,7 +525,7 @@ mod tests {
         let context = StoredContext {
             url: "http://localhost:3333".to_owned(),
             client_id: "cli".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: Some("master".to_owned()),
         };
 
@@ -558,7 +539,7 @@ mod tests {
         let context = StoredContext {
             url: "http://localhost:3333".to_owned(),
             client_id: "cli".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: None,
         };
 

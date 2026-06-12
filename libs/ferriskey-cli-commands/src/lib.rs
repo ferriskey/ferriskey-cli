@@ -1,6 +1,8 @@
 mod client;
 mod context;
+mod login;
 mod realm;
+mod source;
 mod user;
 
 pub use self::client::{
@@ -10,7 +12,13 @@ pub use self::client::{
 pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,
 };
-pub use self::realm::{RealmCommand, RealmNameArgs, RealmSubcommand};
+pub use self::login::LoginCommand;
+pub use self::realm::{
+    ImportSource, RealmCommand, RealmImportArgs, RealmNameArgs, RealmSubcommand,
+};
+pub use self::source::{
+    SourceAddArgs, SourceCommand, SourceKind, SourceRemoveArgs, SourceSubcommand,
+};
 pub use self::user::{
     UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs, UserSubcommand,
 };
@@ -60,4 +68,8 @@ pub enum Commands {
     Client(client::ClientCommand),
     /// Manage users.
     User(user::UserCommand),
+    /// Manage reusable import sources.
+    Source(source::SourceCommand),
+    /// Sign in via the OAuth 2.0 Device Authorization Grant.
+    Login(login::LoginCommand),
 }

@@ -1,0 +1,48 @@
+# Example FerrisKey realm description for `ferris-ctl realm import --from config`.
+# Run a no-network preview with:
+#   ferris-ctl realm import --from config --file examples/realm.yaml --dry-run -o yaml
+name: acme
+
+settings:
+  access_token_lifetime: 300
+  refresh_token_lifetime: 1800
+  user_registration_enabled: true
+  forgot_password_enabled: true
+
+roles:
+  - name: admin
+    description: Realm administrators
+    permissions:
+      - realm:manage
+  - name: viewer
+    description: Read-only access
+
+clients:
+  - client_id: web-app
+    name: Web Application
+    client_type: public
+    public_client: true
+    redirect_uris:
+      - https://app.acme.test/callback
+      - https://app.acme.test/*
+  - client_id: backend
+    name: Backend Service
+    client_type: confidential
+    service_account_enabled: true
+    direct_access_grants_enabled: true
+    roles:
+      - name: service-reader
+        description: Service-scoped read role
+
+users:
+  - username: alice
+    email: alice@acme.test
+    firstname: Alice
+    lastname: Doe
+    email_verified: true
+    roles:
+      - admin
+  - username: bob
+    email: bob@acme.test
+    roles:
+      - viewer

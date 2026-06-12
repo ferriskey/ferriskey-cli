@@ -1,8 +1,10 @@
 use clap::Parser;
-use ferriskey_cli_core::CliCoreError;
-use ferriskey_cli_core::run;
 use ferriskey_cli_commands::Cli;
+use ferriskey_cli_core::run;
 
-fn main() -> Result<(), Box<CliCoreError>> {
-    run(Cli::parse()).map_err(Box::new)
+fn main() {
+    if let Err(err) = run(Cli::parse()) {
+        eprintln!("error: {err}");
+        std::process::exit(err.exit_code());
+    }
 }

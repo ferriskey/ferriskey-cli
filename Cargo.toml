@@ -13,7 +13,7 @@ members = ["libs/ferriskey-cli-client", "libs/ferriskey-cli-commands", "libs/fer
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = ["nathaelb <pro.nathaelbonnal@gmail.com>"]
 edition = "2024"
 license = "Apache-2.0"
@@ -22,5 +22,5 @@ homepage = "https://ferriskey.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-ferriskey-cli-commands = { path = "libs/ferriskey-cli-commands", version = "0.1.0" }
-ferriskey-cli-core = { path = "libs/ferriskey-cli-core", version = "0.1.0" }
+ferriskey-cli-commands = { path = "libs/ferriskey-cli-commands", version = "0.2.0" }
+ferriskey-cli-core = { path = "libs/ferriskey-cli-core", version = "0.2.0" }

@@ -46,9 +46,10 @@ pub struct ContextAddArgs {
     #[arg(long = "client-id")]
     pub client_id: String,
 
-    /// OAuth2 client secret.
+    /// OAuth2 client secret. Omit for public clients that authenticate via
+    /// device-code login.
     #[arg(long = "client-secret")]
-    pub client_secret: String,
+    pub client_secret: Option<String>,
 
     /// Default realm for this context.
     #[arg(long)]

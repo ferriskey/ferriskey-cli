@@ -8,6 +8,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::config::{ConfigError, FileContextRepository, StoredContext};
+use crate::session::{self, SessionError};
 
 type Result<T> = std::result::Result<T, UserCommandError>;
 
@@ -39,6 +40,8 @@ pub enum UserCommandError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Api(#[from] FerriskeyClientError),
+    #[error(transparent)]
+    Session(#[from] SessionError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("no active context is configured")]
@@ -103,17 +106,7 @@ fn resolve_realm(context: &StoredContext, realm: Option<String>) -> Result<Strin
 }
 
 fn authenticate(context: &StoredContext, realm: &str) -> Result<FerriskeyClient> {
-    let unauthenticated = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = unauthenticated.exchange_client_credentials(
-        realm,
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    Ok(FerriskeyClient::new(
-        context.url.clone(),
-        "",
-        token.access_token,
-    )?)
+    Ok(session::authenticated_client(context, realm)?)
 }
 
 fn find_user(client: &FerriskeyClient, realm: &str, username: &str) -> Result<UserRepresentation> {
@@ -176,6 +169,7 @@ fn create_user(
         firstname: args.firstname,
         lastname: args.lastname,
         email: args.email,
+        email_verified: None,
     };
     let user = client.create_user(&realm, &request)?;
     render_user(output_format, to_view(user))
@@ -318,7 +312,7 @@ mod tests {
         StoredContext {
             url: "http://localhost:3333".to_owned(),
             client_id: "cli".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: realm.map(str::to_owned),
         }
     }

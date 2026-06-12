@@ -13,8 +13,28 @@ pub type Result<T> = std::result::Result<T, ConfigError>;
 pub(crate) struct StoredContext {
     pub(crate) url: String,
     pub(crate) client_id: String,
-    pub(crate) client_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_secret: Option<String>,
     pub(crate) realm: Option<String>,
+}
+
+/// A reusable, named import source stored in the config file. `kind` is one of
+/// `keycloak` or `zitadel`; the remaining fields are interpreted per kind.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) struct StoredSource {
+    pub(crate) kind: String,
+    pub(crate) url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) realm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) org_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,6 +42,8 @@ pub(crate) struct StoredContext {
 pub(crate) struct ContextStore {
     pub(crate) current_context: Option<String>,
     pub(crate) contexts: BTreeMap<String, StoredContext>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) sources: BTreeMap<String, StoredSource>,
 }
 
 #[derive(Debug, Error)]

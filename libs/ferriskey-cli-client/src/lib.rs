@@ -64,6 +64,8 @@ pub struct CreateUserRequest {
     pub firstname: Option<String>,
     pub lastname: Option<String>,
     pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_verified: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,51 @@ pub struct JwtToken {
     pub id_token: Option<String>,
     pub refresh_token: String,
     pub token_type: String,
+    #[serde(default)]
+    pub refresh_expires_in: Option<i64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceAuthorizationResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    #[serde(default)]
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u64,
+    #[serde(default = "default_interval")]
+    pub interval: u64,
+}
+
+fn default_interval() -> u64 {
+    5
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OAuthErrorPayload {
+    error: String,
+    #[serde(default)]
+    error_description: Option<String>,
+}
+
+/// Result of a single poll against the device-code token endpoint.
+#[derive(Debug)]
+pub enum DeviceTokenError {
+    AuthorizationPending,
+    SlowDown,
+    AccessDenied,
+    ExpiredToken,
+    InvalidGrant,
+    InvalidClient,
+    /// Any other oauth-defined error in the 400 body.
+    Other {
+        code: String,
+        description: Option<String>,
+    },
+    /// Non-400 status (5xx, etc.) — caller should backoff & retry until global timeout.
+    Transient(FerriskeyClientError),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +156,79 @@ pub struct CreatedClient {
     pub id: String,
     pub client_id: String,
     pub name: String,
+}
+
+/// Partial update of a realm's settings. Only the fields that are `Some` are sent,
+/// mirroring the backend `UpdateRealmSettingValidator` (all-optional) payload.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateRealmSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_signing_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_registration_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forgot_password_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remember_me_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magic_link_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magic_link_ttl: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passkey_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compass_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_verification_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_verification_ttl_hours: Option<i64>,
+}
+
+impl UpdateRealmSettingsRequest {
+    /// Returns true when no field is set (nothing to send).
+    pub fn is_empty(&self) -> bool {
+        self.default_signing_algorithm.is_none()
+            && self.user_registration_enabled.is_none()
+            && self.forgot_password_enabled.is_none()
+            && self.remember_me_enabled.is_none()
+            && self.magic_link_enabled.is_none()
+            && self.magic_link_ttl.is_none()
+            && self.passkey_enabled.is_none()
+            && self.compass_enabled.is_none()
+            && self.access_token_lifetime.is_none()
+            && self.refresh_token_lifetime.is_none()
+            && self.id_token_lifetime.is_none()
+            && self.temporary_token_lifetime.is_none()
+            && self.email_verification_enabled.is_none()
+            && self.email_verification_ttl_hours.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateRoleRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatedRole {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateRedirectUriRequest {
+    pub value: String,
+    pub enabled: bool,
 }
 
 impl FerriskeyClient {
@@ -333,6 +453,198 @@ impl FerriskeyClient {
         Ok(response.json::<CreatedClient>()?)
     }
 
+    pub fn update_realm_settings(
+        &self,
+        realm: &str,
+        request: &UpdateRealmSettingsRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .put(self.endpoint(&format!("realms/{realm}/settings")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn create_role(
+        &self,
+        realm: &str,
+        request: &CreateRoleRequest,
+    ) -> Result<CreatedRole, FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/roles")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        self.extract_envelope(response)
+    }
+
+    pub fn list_realm_roles(&self, realm: &str) -> Result<Vec<CreatedRole>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!("realms/{realm}/roles")))
+    }
+
+    pub fn create_client_role(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        request: &CreateRoleRequest,
+    ) -> Result<CreatedRole, FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/roles")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        self.extract_envelope(response)
+    }
+
+    pub fn add_client_redirect(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        request: &CreateRedirectUriRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/redirects")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn assign_user_role(
+        &self,
+        realm: &str,
+        user_id: &str,
+        role_id: &str,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!(
+                "realms/{realm}/users/{user_id}/roles/{role_id}"
+            )))
+            .bearer_auth(&self.token)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    /// RFC 8628 §3.1 — start a device authorization flow.
+    pub fn device_authorization(
+        &self,
+        realm: &str,
+        client_id: &str,
+        scope: Option<&str>,
+    ) -> Result<DeviceAuthorizationResponse, FerriskeyClientError> {
+        let mut form: Vec<(&str, &str)> = vec![("client_id", client_id)];
+        if let Some(scope) = scope {
+            form.push(("scope", scope));
+        }
+
+        let response = self
+            .http
+            .post(self.endpoint(&format!(
+                "realms/{realm}/protocol/openid-connect/auth/device"
+            )))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&form)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(response.json::<DeviceAuthorizationResponse>()?)
+    }
+
+    /// RFC 8628 §3.4 — poll the token endpoint with the device_code.
+    /// Errors are translated to `DeviceTokenError` so the caller can apply
+    /// the polling/backoff rules without re-parsing.
+    pub fn exchange_device_code(
+        &self,
+        realm: &str,
+        client_id: &str,
+        device_code: &str,
+        client_secret: Option<&str>,
+    ) -> Result<JwtToken, DeviceTokenError> {
+        let mut form: Vec<(&str, &str)> = vec![
+            (
+                "grant_type",
+                "urn:ietf:params:oauth:grant-type:device_code",
+            ),
+            ("device_code", device_code),
+            ("client_id", client_id),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/protocol/openid-connect/token")))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&form)
+            .send()
+            .map_err(|err| DeviceTokenError::Transient(FerriskeyClientError::Http(err)))?;
+
+        let status = response.status();
+        if status.is_success() {
+            return response
+                .json::<JwtToken>()
+                .map_err(|err| DeviceTokenError::Transient(FerriskeyClientError::Http(err)));
+        }
+
+        if status == StatusCode::BAD_REQUEST {
+            let body = response.text().unwrap_or_default();
+            return Err(parse_oauth_error(&body));
+        }
+
+        let body = response.text().unwrap_or_default();
+        Err(DeviceTokenError::Transient(FerriskeyClientError::Api {
+            status,
+            body,
+        }))
+    }
+
     pub fn exchange_client_credentials(
         &self,
         realm: &str,
@@ -394,6 +706,27 @@ impl FerriskeyClient {
             ListPayload::Raw(items) => items,
             ListPayload::Envelope { data } => data,
         })
+    }
+}
+
+fn parse_oauth_error(body: &str) -> DeviceTokenError {
+    match serde_json::from_str::<OAuthErrorPayload>(body) {
+        Ok(payload) => match payload.error.as_str() {
+            "authorization_pending" => DeviceTokenError::AuthorizationPending,
+            "slow_down" => DeviceTokenError::SlowDown,
+            "access_denied" => DeviceTokenError::AccessDenied,
+            "expired_token" => DeviceTokenError::ExpiredToken,
+            "invalid_grant" => DeviceTokenError::InvalidGrant,
+            "invalid_client" => DeviceTokenError::InvalidClient,
+            _ => DeviceTokenError::Other {
+                code: payload.error,
+                description: payload.error_description,
+            },
+        },
+        Err(_) => DeviceTokenError::Transient(FerriskeyClientError::Api {
+            status: StatusCode::BAD_REQUEST,
+            body: body.to_owned(),
+        }),
     }
 }
 

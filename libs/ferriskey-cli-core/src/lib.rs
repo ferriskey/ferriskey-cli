@@ -1,7 +1,12 @@
+mod auth;
 mod client;
 mod config;
 mod context;
+mod credentials;
+mod import;
 mod realm;
+mod session;
+mod source;
 mod user;
 
 use config::StoredContext;
@@ -17,11 +22,27 @@ pub enum CliCoreError {
     #[error(transparent)]
     Context(#[from] context::ContextCommandError),
     #[error(transparent)]
+    Login(#[from] auth::LoginCommandError),
+    #[error(transparent)]
     Realm(#[from] realm::RealmCommandError),
+    #[error(transparent)]
+    Source(#[from] source::SourceCommandError),
     #[error(transparent)]
     User(#[from] user::UserCommandError),
 }
 
+impl CliCoreError {
+    /// Process exit code for this error. Defaults to 1; Ctrl-C during login
+    /// surfaces as 130 (the conventional value for SIGINT).
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            CliCoreError::Login(err) => err.exit_code(),
+            _ => 1,
+        }
+    }
+}
+
+#[allow(clippy::result_large_err)]
 pub fn run(cli: Cli) -> Result<()> {
     let inline_context = build_inline_context(&cli);
     match cli.command {
@@ -44,15 +65,23 @@ pub fn run(cli: Cli) -> Result<()> {
             inline_context,
             command,
         )?),
+        Commands::Source(command) => Ok(source::run(cli.output.as_str(), command)?),
+        Commands::Login(command) => Ok(auth::run(
+            cli.context.as_deref(),
+            cli.url.as_deref(),
+            cli.client_id.as_deref(),
+            cli.realm.as_deref(),
+            command,
+        )?),
     }
 }
 
 fn build_inline_context(cli: &Cli) -> Option<StoredContext> {
-    match (&cli.url, &cli.client_id, &cli.client_secret) {
-        (Some(url), Some(client_id), Some(client_secret)) => Some(StoredContext {
+    match (&cli.url, &cli.client_id) {
+        (Some(url), Some(client_id)) => Some(StoredContext {
             url: url.clone(),
             client_id: client_id.clone(),
-            client_secret: client_secret.clone(),
+            client_secret: cli.client_secret.clone(),
             realm: cli.realm.clone(),
         }),
         _ => None,

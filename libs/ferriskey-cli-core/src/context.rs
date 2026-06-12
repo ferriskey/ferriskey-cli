@@ -116,7 +116,7 @@ where
         let context = StoredContext {
             url: args.url,
             client_id: args.client_id,
-            client_secret: args.client_secret,
+            client_secret: args.client_secret.filter(|s| !s.is_empty()),
             realm: args.realm,
         };
 
@@ -387,7 +387,7 @@ mod tests {
             name: name.to_owned(),
             url: "https://example.com".to_owned(),
             client_id: "client".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: Some("master".to_owned()),
         }
     }
@@ -410,7 +410,7 @@ mod tests {
             StoredContext {
                 url: "https://dev.example.com".to_owned(),
                 client_id: "dev-client".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: None,
             },
         );
@@ -419,13 +419,14 @@ mod tests {
             StoredContext {
                 url: "https://prod.example.com".to_owned(),
                 client_id: "prod-client".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: None,
             },
         );
         let service = ContextService::new(MemoryContextRepository::with_store(ContextStore {
             current_context: Some("dev".to_owned()),
             contexts,
+            ..Default::default()
         }));
 
         let switched = service
@@ -446,13 +447,14 @@ mod tests {
             StoredContext {
                 url: "https://example.com".to_owned(),
                 client_id: "client".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: None,
             },
         );
         let service = ContextService::new(MemoryContextRepository::with_store(ContextStore {
             current_context: Some("dev".to_owned()),
             contexts,
+            ..Default::default()
         }));
 
         let error = service
@@ -475,13 +477,14 @@ mod tests {
             StoredContext {
                 url: "https://example.com".to_owned(),
                 client_id: "client".to_owned(),
-                client_secret: "secret".to_owned(),
+                client_secret: Some("secret".to_owned()),
                 realm: Some("master".to_owned()),
             },
         );
         let store = ContextStore {
             current_context: Some("dev".to_owned()),
             contexts,
+            ..Default::default()
         };
 
         repository.save(&store).expect("saved");
@@ -501,13 +504,14 @@ mod tests {
             StoredContext {
                 url: "http://localhost:3333".to_owned(),
                 client_id: "my-client".to_owned(),
-                client_secret: "supersecret".to_owned(),
+                client_secret: Some("supersecret".to_owned()),
                 realm: Some("master".to_owned()),
             },
         );
         let store = ContextStore {
             current_context: Some("local".to_owned()),
             contexts,
+            ..Default::default()
         };
 
         repository.save(&store).expect("saved");

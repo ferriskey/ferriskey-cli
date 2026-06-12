@@ -1,11 +1,19 @@
 use ferriskey_cli_client::{CreateRealmRequest, FerriskeyClient, FerriskeyClientError, Realm};
-use ferriskey_cli_commands::{RealmCommand, RealmNameArgs, RealmSubcommand};
+use ferriskey_cli_commands::{RealmCommand, RealmImportArgs, RealmNameArgs, RealmSubcommand};
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::config::{ConfigError, FileContextRepository, StoredContext};
+use crate::import::{self, ImportReport, RealmBlueprint};
+use crate::session::{self, SessionError};
 
 type Result<T> = std::result::Result<T, RealmCommandError>;
+
+impl From<import::ImportError> for RealmCommandError {
+    fn from(error: import::ImportError) -> Self {
+        RealmCommandError::Import(Box::new(error))
+    }
+}
 
 pub fn run(
     output_format: &str,
@@ -22,6 +30,9 @@ pub fn run(
         RealmSubcommand::Delete(args) => {
             delete_realm(output_format, context_override, inline_context, args)
         }
+        RealmSubcommand::Import(args) => {
+            import_realm(output_format, context_override, inline_context, args)
+        }
     }
 }
 
@@ -31,6 +42,8 @@ pub enum RealmCommandError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Api(#[from] FerriskeyClientError),
+    #[error(transparent)]
+    Session(#[from] SessionError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("no active context is configured")]
@@ -41,6 +54,8 @@ pub enum RealmCommandError {
     MissingAuthRealm,
     #[error("realm '{0}' not found")]
     RealmNotFound(String),
+    #[error(transparent)]
+    Import(Box<import::ImportError>),
     #[error("unsupported output format: {0}")]
     UnsupportedOutputFormat(String),
     #[error("failed to serialize JSON output")]
@@ -89,17 +104,7 @@ fn auth_client(context: &StoredContext) -> Result<FerriskeyClient> {
         .realm
         .as_deref()
         .ok_or(RealmCommandError::MissingAuthRealm)?;
-    let unauthenticated = FerriskeyClient::new(context.url.clone(), "", "")?;
-    let token = unauthenticated.exchange_client_credentials(
-        auth_realm,
-        context.client_id.as_str(),
-        context.client_secret.as_str(),
-    )?;
-    Ok(FerriskeyClient::new(
-        context.url.clone(),
-        "",
-        token.access_token,
-    )?)
+    Ok(session::authenticated_client(context, auth_realm)?)
 }
 
 fn to_view(realm: Realm) -> RealmView {
@@ -160,6 +165,123 @@ fn delete_realm(
     let client = auth_client(&context)?;
     client.delete_realm(&args.name)?;
     render_message(output_format, &format!("realm '{}' deleted", args.name))
+}
+
+fn import_realm(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: RealmImportArgs,
+) -> Result<()> {
+    let source = import::sources::source_from_args(&args)?;
+    let mut blueprints = source.fetch()?;
+
+    // --target-realm only makes sense for a single resolved realm; a source that
+    // yields several (e.g. all Zitadel orgs) keeps the per-source names.
+    if let Some(name) = &args.target_realm {
+        match blueprints.len() {
+            1 => blueprints[0].name = name.clone(),
+            n if n > 1 => eprintln!(
+                "note: --target-realm ignored ({n} realms resolved; keeping source names)"
+            ),
+            _ => {}
+        }
+    }
+
+    // Dry-run resolves and prints the blueprints without touching FerrisKey,
+    // so it needs neither a configured context nor authentication.
+    if args.dry_run {
+        return render_blueprints(output_format, &blueprints);
+    }
+
+    let context = resolve_context(context_override, inline_context)?;
+    let client = auth_client(&context)?;
+    let reports = blueprints
+        .iter()
+        .map(|blueprint| import::apply::apply_blueprint(&client, blueprint, false))
+        .collect::<std::result::Result<Vec<ImportReport>, _>>()?;
+    render_reports(output_format, &reports)
+}
+
+fn render_blueprints(output_format: &str, blueprints: &[RealmBlueprint]) -> Result<()> {
+    match output_format {
+        "table" => {
+            for (index, blueprint) in blueprints.iter().enumerate() {
+                if index > 0 {
+                    println!();
+                }
+                println!("realm:    {}", blueprint.name);
+                println!(
+                    "settings: {}",
+                    if blueprint.settings.is_some() { "yes" } else { "no" }
+                );
+                println!("roles:    {}", blueprint.roles.len());
+                println!("clients:  {}", blueprint.clients.len());
+                println!("users:    {}", blueprint.users.len());
+            }
+            Ok(())
+        }
+        "json" => render_json(blueprints),
+        "yaml" => render_yaml(blueprints),
+        _ => Err(RealmCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
+fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
+    match output_format {
+        "table" => {
+            for (index, report) in reports.iter().enumerate() {
+                if index > 0 {
+                    println!();
+                }
+                println!("realm '{}' imported", report.realm);
+                println!("  realm created:        {}", report.realm_created);
+                println!("  settings applied:     {}", report.settings_applied);
+                println!("  roles created:        {}", report.roles_created);
+                println!("  clients created:      {}", report.clients_created);
+                println!("  redirect uris added:  {}", report.redirects_created);
+                println!("  client roles created: {}", report.client_roles_created);
+                println!("  users created:        {}", report.users_created);
+                println!("  role assignments:     {}", report.role_assignments);
+                if !report.warnings.is_empty() {
+                    println!("  warnings:");
+                    for warning in &report.warnings {
+                        println!("    - {warning}");
+                    }
+                }
+            }
+            Ok(())
+        }
+        "json" => render_json(reports),
+        "yaml" => render_yaml(reports),
+        _ => Err(RealmCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
+/// Serializes a slice as JSON — a single element is emitted as an object, more
+/// than one as an array.
+fn render_json<T: Serialize>(items: &[T]) -> Result<()> {
+    let json = match items {
+        [single] => serde_json::to_string_pretty(single),
+        _ => serde_json::to_string_pretty(items),
+    }
+    .map_err(|source| RealmCommandError::SerializeJson { source })?;
+    println!("{json}");
+    Ok(())
+}
+
+fn render_yaml<T: Serialize>(items: &[T]) -> Result<()> {
+    let yaml = match items {
+        [single] => serde_yaml::to_string(single),
+        _ => serde_yaml::to_string(items),
+    }
+    .map_err(|source| RealmCommandError::SerializeYaml { source })?;
+    println!("{yaml}");
+    Ok(())
 }
 
 fn render_realm_list(output_format: &str, realms: &[RealmView]) -> Result<()> {
@@ -269,7 +391,7 @@ mod tests {
         StoredContext {
             url: "http://localhost:3333".to_owned(),
             client_id: "cli".to_owned(),
-            client_secret: "secret".to_owned(),
+            client_secret: Some("secret".to_owned()),
             realm: realm.map(str::to_owned),
         }
     }
