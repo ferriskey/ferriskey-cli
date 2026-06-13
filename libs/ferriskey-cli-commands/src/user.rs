@@ -73,4 +73,8 @@ pub struct UserDeleteArgs {
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+
+    /// Skip the confirmation prompt (required in non-interactive shells).
+    #[arg(long, short = 'f', default_value_t = false)]
+    pub force: bool,
 }

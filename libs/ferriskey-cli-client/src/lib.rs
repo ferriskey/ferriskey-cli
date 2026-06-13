@@ -645,6 +645,40 @@ impl FerriskeyClient {
         }))
     }
 
+    /// Exchange a refresh token for a fresh access token (OAuth2 `refresh_token`
+    /// grant). `client_secret` is sent only for confidential clients.
+    pub fn exchange_refresh_token(
+        &self,
+        realm: &str,
+        client_id: &str,
+        refresh_token: &str,
+        client_secret: Option<&str>,
+    ) -> Result<JwtToken, FerriskeyClientError> {
+        let mut form: Vec<(&str, &str)> = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/protocol/openid-connect/token")))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&form)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(response.json::<JwtToken>()?)
+    }
+
     pub fn exchange_client_credentials(
         &self,
         realm: &str,

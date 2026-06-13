@@ -7,6 +7,7 @@ use ferriskey_cli_commands::{
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::confirm::{self, confirm};
 use crate::config::{ConfigError, FileContextRepository, StoredContext};
 use crate::session::{self, SessionError};
 
@@ -42,6 +43,8 @@ pub enum UserCommandError {
     Api(#[from] FerriskeyClientError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Confirm(#[from] confirm::ConfirmError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("no active context is configured")]
@@ -181,6 +184,10 @@ fn delete_user(
     inline_context: Option<StoredContext>,
     args: UserDeleteArgs,
 ) -> Result<()> {
+    confirm(
+        &format!("Delete user '{}'?", args.username),
+        args.force,
+    )?;
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
     let client = authenticate(&context, &realm)?;
