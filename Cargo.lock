@@ -258,7 +258,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "ferris-ctl"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clap",
  "ferriskey-cli-commands",
@@ -267,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "ferriskey-cli-client"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "reqwest",
  "serde",
@@ -277,14 +277,14 @@ dependencies = [
 
 [[package]]
 name = "ferriskey-cli-commands"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clap",
 ]
 
 [[package]]
 name = "ferriskey-cli-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64",
  "ctrlc",
