@@ -1,8 +1,11 @@
 use ferriskey_cli_client::{CreateRealmRequest, FerriskeyClient, FerriskeyClientError, Realm};
-use ferriskey_cli_commands::{RealmCommand, RealmImportArgs, RealmNameArgs, RealmSubcommand};
+use ferriskey_cli_commands::{
+    RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmSubcommand,
+};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::confirm::{self, confirm};
 use crate::config::{ConfigError, FileContextRepository, StoredContext};
 use crate::import::{self, ImportReport, RealmBlueprint};
 use crate::session::{self, SessionError};
@@ -44,6 +47,8 @@ pub enum RealmCommandError {
     Api(#[from] FerriskeyClientError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Confirm(#[from] confirm::ConfirmError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("no active context is configured")]
@@ -159,8 +164,15 @@ fn delete_realm(
     output_format: &str,
     context_override: Option<&str>,
     inline_context: Option<StoredContext>,
-    args: RealmNameArgs,
+    args: RealmDeleteArgs,
 ) -> Result<()> {
+    confirm(
+        &format!(
+            "Delete realm '{}'? This permanently removes its clients, users, and roles.",
+            args.name
+        ),
+        args.force,
+    )?;
     let context = resolve_context(context_override, inline_context)?;
     let client = auth_client(&context)?;
     client.delete_realm(&args.name)?;
@@ -262,24 +274,19 @@ fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
     }
 }
 
-/// Serializes a slice as JSON — a single element is emitted as an object, more
-/// than one as an array.
+/// Serializes a collection as a JSON array. `realm import` can resolve one or
+/// many realms, so the shape is kept stable (always an array) for scripting,
+/// regardless of how many were resolved.
 fn render_json<T: Serialize>(items: &[T]) -> Result<()> {
-    let json = match items {
-        [single] => serde_json::to_string_pretty(single),
-        _ => serde_json::to_string_pretty(items),
-    }
-    .map_err(|source| RealmCommandError::SerializeJson { source })?;
+    let json = serde_json::to_string_pretty(items)
+        .map_err(|source| RealmCommandError::SerializeJson { source })?;
     println!("{json}");
     Ok(())
 }
 
 fn render_yaml<T: Serialize>(items: &[T]) -> Result<()> {
-    let yaml = match items {
-        [single] => serde_yaml::to_string(single),
-        _ => serde_yaml::to_string(items),
-    }
-    .map_err(|source| RealmCommandError::SerializeYaml { source })?;
+    let yaml =
+        serde_yaml::to_string(items).map_err(|source| RealmCommandError::SerializeYaml { source })?;
     println!("{yaml}");
     Ok(())
 }

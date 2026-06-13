@@ -1,5 +1,6 @@
 mod auth;
 mod client;
+mod confirm;
 mod config;
 mod context;
 mod credentials;
@@ -73,6 +74,7 @@ pub fn run(cli: Cli) -> Result<()> {
             cli.realm.as_deref(),
             command,
         )?),
+        Commands::Logout => Ok(auth::logout()?),
     }
 }
 

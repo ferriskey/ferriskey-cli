@@ -14,7 +14,7 @@ pub use self::context::{
 };
 pub use self::login::LoginCommand;
 pub use self::realm::{
-    ImportSource, RealmCommand, RealmImportArgs, RealmNameArgs, RealmSubcommand,
+    ImportSource, RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmSubcommand,
 };
 pub use self::source::{
     SourceAddArgs, SourceCommand, SourceKind, SourceRemoveArgs, SourceSubcommand,
@@ -72,4 +72,6 @@ pub enum Commands {
     Source(source::SourceCommand),
     /// Sign in via the OAuth 2.0 Device Authorization Grant.
     Login(login::LoginCommand),
+    /// Remove the stored login session (deletes the credentials file).
+    Logout,
 }

@@ -20,7 +20,7 @@ pub enum RealmSubcommand {
     /// Create a realm.
     Create(RealmNameArgs),
     /// Delete a realm.
-    Delete(RealmNameArgs),
+    Delete(RealmDeleteArgs),
     /// Import a realm (settings, clients, roles, users) from an external source.
     Import(RealmImportArgs),
 }
@@ -30,6 +30,17 @@ pub enum RealmSubcommand {
 pub struct RealmNameArgs {
     /// Realm name.
     pub name: String,
+}
+
+/// Arguments for `realm delete`.
+#[derive(Debug, Args)]
+pub struct RealmDeleteArgs {
+    /// Realm name.
+    pub name: String,
+
+    /// Skip the confirmation prompt (required in non-interactive shells).
+    #[arg(long, short = 'f', default_value_t = false)]
+    pub force: bool,
 }
 
 /// Source to import a realm from.

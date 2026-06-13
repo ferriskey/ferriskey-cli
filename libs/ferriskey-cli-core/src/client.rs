@@ -8,6 +8,7 @@ use ferriskey_cli_commands::{
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::confirm::{self, confirm};
 use crate::config::{ConfigError, ContextStore, FileContextRepository, StoredContext};
 use crate::session::{self, SessionError};
 
@@ -43,6 +44,8 @@ pub enum ClientCommandError {
     Api(#[from] FerriskeyClientError),
     #[error(transparent)]
     Session(#[from] SessionError),
+    #[error(transparent)]
+    Confirm(#[from] confirm::ConfirmError),
     #[error("context '{0}' does not exist")]
     ContextNotFound(String),
     #[error("client '{0}' not found")]
@@ -107,6 +110,10 @@ fn delete_client(
     inline_context: Option<StoredContext>,
     args: ClientDeleteArgs,
 ) -> Result<()> {
+    confirm(
+        &format!("Delete client '{}'?", args.client_id),
+        args.force,
+    )?;
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
     let client = session::authenticated_client(&context, &realm)?;
