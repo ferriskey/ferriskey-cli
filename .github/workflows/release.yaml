@@ -100,6 +100,10 @@ jobs:
   release:
     name: github release
     needs: build
+    # Publish the release as long as the run wasn't cancelled, even if one
+    # build target failed — a release with the binaries that did build beats
+    # no release at all. Missing assets are visible in the Actions run.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: checkout
