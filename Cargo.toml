@@ -13,7 +13,7 @@ members = ["libs/ferriskey-cli-client", "libs/ferriskey-cli-commands", "libs/fer
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 authors = ["nathaelb <pro.nathaelbonnal@gmail.com>"]
 edition = "2024"
 license = "Apache-2.0"
