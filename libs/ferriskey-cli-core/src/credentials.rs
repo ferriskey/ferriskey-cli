@@ -147,6 +147,19 @@ impl CredentialsRepository {
         Ok(())
     }
 
+    /// Remove the stored credentials file. Returns `Ok(false)` when there was
+    /// nothing to remove (no active session), `Ok(true)` when a file was deleted.
+    pub fn delete(&self) -> Result<bool> {
+        match fs::remove_file(&self.file_path) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(CredentialsError::Write {
+                path: self.file_path.display().to_string(),
+                source,
+            }),
+        }
+    }
+
     fn ensure_parent_dir(&self) -> Result<()> {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent).map_err(|source| CredentialsError::CreateDirectory {

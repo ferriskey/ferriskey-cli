@@ -135,6 +135,18 @@ pub fn run(
     Ok(())
 }
 
+/// Remove the stored login session. Dispatched from `core::run` for the
+/// `logout` command.
+pub fn logout() -> Result<()> {
+    let removed = CredentialsRepository::new()?.delete()?;
+    if removed {
+        println!("Logged out. Stored credentials removed.");
+    } else {
+        println!("No active session; nothing to remove.");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 struct LoginTarget {
     url: String,
