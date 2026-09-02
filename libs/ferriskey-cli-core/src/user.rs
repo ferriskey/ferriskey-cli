@@ -2,7 +2,8 @@ use ferriskey_cli_client::{
     CreateUserRequest, FerriskeyClient, FerriskeyClientError, UserRepresentation,
 };
 use ferriskey_cli_commands::{
-    UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs, UserSubcommand,
+    UserAssignRoleArgs, UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs,
+    UserSubcommand,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -32,6 +33,9 @@ pub fn run(
         UserSubcommand::Delete(args) => {
             delete_user(output_format, context_override, inline_context, args)
         }
+        UserSubcommand::AssignRole(args) => {
+            assign_role(output_format, context_override, inline_context, args)
+        }
     }
 }
 
@@ -55,6 +59,8 @@ pub enum UserCommandError {
     MissingRealm,
     #[error("user '{0}' not found")]
     UserNotFound(String),
+    #[error("role '{0}' not found in realm")]
+    RoleNotFound(String),
     #[error("unsupported output format: {0}")]
     UnsupportedOutputFormat(String),
     #[error("failed to serialize JSON output")]
@@ -194,6 +200,31 @@ fn delete_user(
     let user = find_user(&client, &realm, &args.username)?;
     client.delete_user(&realm, &user.id)?;
     render_message(output_format, &format!("user '{}' deleted", args.username))
+}
+
+fn assign_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: UserAssignRoleArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = authenticate(&context, &realm)?;
+    let user = find_user(&client, &realm, &args.username)?;
+    let role = client
+        .list_realm_roles(&realm)?
+        .into_iter()
+        .find(|r| r.name == args.role)
+        .ok_or_else(|| UserCommandError::RoleNotFound(args.role.clone()))?;
+    client.assign_user_role(&realm, &user.id, &role.id)?;
+    render_message(
+        output_format,
+        &format!(
+            "role '{}' assigned to user '{}'",
+            args.role, args.username
+        ),
+    )
 }
 
 fn render_user_list(output_format: &str, users: &[UserView]) -> Result<()> {

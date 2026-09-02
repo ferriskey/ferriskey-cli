@@ -20,6 +20,22 @@ pub enum UserSubcommand {
     Create(UserCreateArgs),
     /// Delete a user.
     Delete(UserDeleteArgs),
+    /// Assign a realm role to a user.
+    AssignRole(UserAssignRoleArgs),
+}
+
+/// Arguments for assigning a realm role to a user.
+#[derive(Debug, Args)]
+pub struct UserAssignRoleArgs {
+    /// Username.
+    pub username: String,
+
+    /// Realm role name to assign.
+    pub role: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
 }
 
 /// Arguments for listing users.
