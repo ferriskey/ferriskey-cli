@@ -283,7 +283,7 @@ fn remove_role(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     let role = resolve_role(&client, &realm, &args.role)?;
     client.remove_user_role(&realm, &user.id, &role.id)?;
@@ -304,7 +304,7 @@ fn list_user_roles(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     let roles = client.list_user_roles(&realm, &user.id)?;
     let views: Vec<RoleView> = roles.into_iter().map(to_role_view).collect();
@@ -349,7 +349,7 @@ fn set_password(
 
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     client.set_user_password(
         &realm,
