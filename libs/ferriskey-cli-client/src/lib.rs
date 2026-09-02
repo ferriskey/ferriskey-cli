@@ -231,6 +231,12 @@ pub struct CreateRedirectUriRequest {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SetPasswordRequest {
+    pub value: String,
+    pub temporary: bool,
+}
+
 impl FerriskeyClient {
     pub fn new(
         base_url: impl Into<String>,
@@ -602,6 +608,59 @@ impl FerriskeyClient {
                 "realms/{realm}/users/{user_id}/roles/{role_id}"
             )))
             .bearer_auth(&self.token)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn remove_user_role(
+        &self,
+        realm: &str,
+        user_id: &str,
+        role_id: &str,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .delete(self.endpoint(&format!(
+                "realms/{realm}/users/{user_id}/roles/{role_id}"
+            )))
+            .bearer_auth(&self.token)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn list_user_roles(
+        &self,
+        realm: &str,
+        user_id: &str,
+    ) -> Result<Vec<CreatedRole>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!("realms/{realm}/users/{user_id}/roles")))
+    }
+
+    pub fn set_user_password(
+        &self,
+        realm: &str,
+        user_id: &str,
+        request: &SetPasswordRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .put(self.endpoint(&format!("realms/{realm}/users/{user_id}/reset-password")))
+            .bearer_auth(&self.token)
+            .json(request)
             .send()?;
 
         if !response.status().is_success() {

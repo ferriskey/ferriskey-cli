@@ -22,6 +22,12 @@ pub enum UserSubcommand {
     Delete(UserDeleteArgs),
     /// Assign a realm role to a user.
     AssignRole(UserAssignRoleArgs),
+    /// Remove a realm role from a user.
+    RemoveRole(UserRemoveRoleArgs),
+    /// List the realm roles assigned to a user.
+    Roles(UserRolesArgs),
+    /// Set a user's password.
+    SetPassword(UserSetPasswordArgs),
 }
 
 /// Arguments for assigning a realm role to a user.
@@ -36,6 +42,55 @@ pub struct UserAssignRoleArgs {
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+}
+
+/// Arguments for removing a realm role from a user.
+#[derive(Debug, Args)]
+pub struct UserRemoveRoleArgs {
+    /// Username.
+    pub username: String,
+
+    /// Realm role name to remove.
+    pub role: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+}
+
+/// Arguments for listing a user's realm roles.
+#[derive(Debug, Args)]
+pub struct UserRolesArgs {
+    /// Username.
+    pub username: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+}
+
+/// Arguments for setting a user's password.
+#[derive(Debug, Args)]
+pub struct UserSetPasswordArgs {
+    /// Username.
+    pub username: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+
+    /// New password. Prefer `--stdin` — a value here lands in shell history
+    /// and the process list.
+    #[arg(long, conflicts_with = "stdin")]
+    pub password: Option<String>,
+
+    /// Read the new password from stdin (trailing newline trimmed).
+    #[arg(long, default_value_t = false)]
+    pub stdin: bool,
+
+    /// Require the user to change this password on next login.
+    #[arg(long, default_value_t = false)]
+    pub temporary: bool,
 }
 
 /// Arguments for listing users.

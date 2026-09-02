@@ -23,7 +23,7 @@ pub use self::source::{
 };
 pub use self::user::{
     UserAssignRoleArgs, UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs,
-    UserSubcommand,
+    UserRemoveRoleArgs, UserRolesArgs, UserSetPasswordArgs, UserSubcommand,
 };
 use clap::{Parser, Subcommand};
 
