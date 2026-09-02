@@ -14,13 +14,15 @@ pub use self::context::{
 };
 pub use self::login::LoginCommand;
 pub use self::realm::{
-    ImportSource, RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmSubcommand,
+    ImportSource, RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmRoleCommand,
+    RealmRoleCreateArgs, RealmRoleListArgs, RealmRoleSubcommand, RealmSubcommand,
 };
 pub use self::source::{
     SourceAddArgs, SourceCommand, SourceKind, SourceRemoveArgs, SourceSubcommand,
 };
 pub use self::user::{
-    UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs, UserSubcommand,
+    UserAssignRoleArgs, UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs,
+    UserSubcommand,
 };
 use clap::{Parser, Subcommand};
 
