@@ -323,23 +323,13 @@ fn delete_role(
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
     let client = auth_client(&context)?;
-    let client_uuid = args
-        .client
-        .as_deref()
-        .map(|client_id| resolve_client_uuid(&client, &realm, client_id))
-        .transpose()?;
-    let roles = match &client_uuid {
-        Some(uuid) => client.list_client_roles(&realm, uuid)?,
-        None => client.list_realm_roles(&realm)?,
-    };
-    let role = roles
+    let role = list_roles_in_scope(&client, &realm, args.client.as_deref())?
         .into_iter()
         .find(|r| r.name == args.name)
         .ok_or_else(|| RealmCommandError::RoleNotFound(args.name.clone()))?;
-    match &client_uuid {
-        Some(uuid) => client.delete_client_role(&realm, uuid, &role.id)?,
-        None => client.delete_role(&realm, &role.id)?,
-    }
+    // A role id is unique across both realm and client scopes, so deletion
+    // doesn't need to be scoped the way create/list do.
+    client.delete_role(&realm, &role.id)?;
     render_message(output_format, &format!("role '{}' deleted", args.name))
 }
 
