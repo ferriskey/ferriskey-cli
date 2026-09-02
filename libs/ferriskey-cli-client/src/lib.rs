@@ -529,29 +529,6 @@ impl FerriskeyClient {
         self.get_list(&self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/roles")))
     }
 
-    pub fn delete_client_role(
-        &self,
-        realm: &str,
-        client_uuid: &str,
-        role_id: &str,
-    ) -> Result<(), FerriskeyClientError> {
-        let response = self
-            .http
-            .delete(self.endpoint(&format!(
-                "realms/{realm}/clients/{client_uuid}/roles/{role_id}"
-            )))
-            .bearer_auth(&self.token)
-            .send()?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().unwrap_or_default();
-            return Err(FerriskeyClientError::Api { status, body });
-        }
-
-        Ok(())
-    }
-
     pub fn create_client_role(
         &self,
         realm: &str,
@@ -571,7 +548,9 @@ impl FerriskeyClient {
             return Err(FerriskeyClientError::Api { status, body });
         }
 
-        self.extract_envelope(response)
+        // Unlike `create_role`, this endpoint returns the created role as a
+        // bare object, not wrapped in a `{"data": ...}` envelope.
+        Ok(response.json::<CreatedRole>()?)
     }
 
     pub fn add_client_redirect(
