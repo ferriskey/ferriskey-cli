@@ -1,9 +1,12 @@
+use std::io::Read;
+
 use ferriskey_cli_client::{
-    CreateUserRequest, FerriskeyClient, FerriskeyClientError, UserRepresentation,
+    CreateUserRequest, CreatedRole, FerriskeyClient, FerriskeyClientError, SetPasswordRequest,
+    UserRepresentation,
 };
 use ferriskey_cli_commands::{
     UserAssignRoleArgs, UserCommand, UserCreateArgs, UserDeleteArgs, UserGetArgs, UserListArgs,
-    UserSubcommand,
+    UserRemoveRoleArgs, UserRolesArgs, UserSetPasswordArgs, UserSubcommand,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -36,6 +39,15 @@ pub fn run(
         UserSubcommand::AssignRole(args) => {
             assign_role(output_format, context_override, inline_context, args)
         }
+        UserSubcommand::RemoveRole(args) => {
+            remove_role(output_format, context_override, inline_context, args)
+        }
+        UserSubcommand::Roles(args) => {
+            list_user_roles(output_format, context_override, inline_context, args)
+        }
+        UserSubcommand::SetPassword(args) => {
+            set_password(output_format, context_override, inline_context, args)
+        }
     }
 }
 
@@ -65,6 +77,13 @@ pub enum UserCommandError {
     UserNotFound(String),
     #[error("role '{0}' not found in realm")]
     RoleNotFound(String),
+    #[error("pass exactly one of '--password' or '--stdin'")]
+    InvalidPasswordSource,
+    #[error("failed to read password from stdin")]
+    ReadStdin {
+        #[source]
+        source: std::io::Error,
+    },
     #[error("unsupported output format: {0}")]
     UnsupportedOutputFormat(String),
     #[error("failed to serialize JSON output")]
@@ -87,6 +106,19 @@ struct UserView {
     lastname: String,
     email: String,
     enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RoleView {
+    id: String,
+    name: String,
+}
+
+fn to_role_view(role: CreatedRole) -> RoleView {
+    RoleView {
+        id: role.id,
+        name: role.name,
+    }
 }
 
 fn resolve_context(
@@ -214,6 +246,14 @@ fn delete_user(
     render_message(output_format, &format!("user '{}' deleted", args.username))
 }
 
+fn resolve_role(client: &FerriskeyClient, realm: &str, role_name: &str) -> Result<CreatedRole> {
+    client
+        .list_realm_roles(realm)?
+        .into_iter()
+        .find(|r| r.name == role_name)
+        .ok_or_else(|| UserCommandError::RoleNotFound(role_name.to_owned()))
+}
+
 fn assign_role(
     output_format: &str,
     context_override: Option<&str>,
@@ -224,11 +264,7 @@ fn assign_role(
     let realm = resolve_realm(&context, args.realm)?;
     let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
-    let role = client
-        .list_realm_roles(&realm)?
-        .into_iter()
-        .find(|r| r.name == args.role)
-        .ok_or_else(|| UserCommandError::RoleNotFound(args.role.clone()))?;
+    let role = resolve_role(&client, &realm, &args.role)?;
     client.assign_user_role(&realm, &user.id, &role.id)?;
     render_message(
         output_format,
@@ -236,6 +272,96 @@ fn assign_role(
             "role '{}' assigned to user '{}'",
             args.role, args.username
         ),
+    )
+}
+
+fn remove_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: UserRemoveRoleArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = authenticate(&context, &realm)?;
+    let user = find_user(&client, &realm, &args.username)?;
+    let role = resolve_role(&client, &realm, &args.role)?;
+    client.remove_user_role(&realm, &user.id, &role.id)?;
+    render_message(
+        output_format,
+        &format!(
+            "role '{}' removed from user '{}'",
+            args.role, args.username
+        ),
+    )
+}
+
+fn list_user_roles(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: UserRolesArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = authenticate(&context, &realm)?;
+    let user = find_user(&client, &realm, &args.username)?;
+    let roles = client.list_user_roles(&realm, &user.id)?;
+    let views: Vec<RoleView> = roles.into_iter().map(to_role_view).collect();
+    render_role_list(output_format, &views)
+}
+
+/// Where `set-password` reads the new password from — resolved before any
+/// I/O so the "exactly one source" rule stays pure and testable.
+#[derive(Debug, PartialEq, Eq)]
+enum PasswordSource {
+    Literal(String),
+    Stdin,
+}
+
+fn resolve_password_source(
+    password: Option<String>,
+    stdin: bool,
+) -> Result<PasswordSource> {
+    match (password, stdin) {
+        (Some(password), false) => Ok(PasswordSource::Literal(password)),
+        (None, true) => Ok(PasswordSource::Stdin),
+        _ => Err(UserCommandError::InvalidPasswordSource),
+    }
+}
+
+fn set_password(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: UserSetPasswordArgs,
+) -> Result<()> {
+    let value = match resolve_password_source(args.password, args.stdin)? {
+        PasswordSource::Literal(password) => password,
+        PasswordSource::Stdin => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|source| UserCommandError::ReadStdin { source })?;
+            buf.trim_end_matches(['\n', '\r']).to_owned()
+        }
+    };
+
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = authenticate(&context, &realm)?;
+    let user = find_user(&client, &realm, &args.username)?;
+    client.set_user_password(
+        &realm,
+        &user.id,
+        &SetPasswordRequest {
+            value,
+            temporary: args.temporary,
+        },
+    )?;
+    render_message(
+        output_format,
+        &format!("password set for user '{}'", args.username),
     )
 }
 
@@ -318,6 +444,50 @@ fn render_user(output_format: &str, user: UserView) -> Result<()> {
             println!(
                 "{}",
                 serde_yaml::to_string(&user)
+                    .map_err(|source| UserCommandError::SerializeYaml { source })?
+            );
+            Ok(())
+        }
+        _ => Err(UserCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
+fn render_role_list(output_format: &str, roles: &[RoleView]) -> Result<()> {
+    match output_format {
+        "table" => {
+            let name_width = roles
+                .iter()
+                .map(|r| r.name.len())
+                .max()
+                .unwrap_or(0)
+                .max("NAME".len());
+            let id_width = roles
+                .iter()
+                .map(|r| r.id.len())
+                .max()
+                .unwrap_or(0)
+                .max("ID".len());
+
+            println!("{:<name_width$}  {:<id_width$}", "NAME", "ID");
+            for r in roles {
+                println!("{:<name_width$}  {:<id_width$}", r.name, r.id);
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(roles)
+                    .map_err(|source| UserCommandError::SerializeJson { source })?
+            );
+            Ok(())
+        }
+        "yaml" => {
+            println!(
+                "{}",
+                serde_yaml::to_string(roles)
                     .map_err(|source| UserCommandError::SerializeYaml { source })?
             );
             Ok(())
@@ -458,5 +628,52 @@ mod tests {
     fn render_user_list_rejects_unknown_format() {
         let err = render_user_list("xml", &[]).expect_err("unknown format should error");
         assert!(matches!(err, UserCommandError::UnsupportedOutputFormat(_)));
+    }
+
+    #[test]
+    fn to_role_view_maps_id_and_name() {
+        let role = CreatedRole {
+            id: "r-1".to_owned(),
+            name: "admin".to_owned(),
+        };
+        let view = to_role_view(role);
+        assert_eq!(view.id, "r-1");
+        assert_eq!(view.name, "admin");
+    }
+
+    #[test]
+    fn render_role_list_table_and_json_succeed() {
+        let roles = vec![RoleView {
+            id: "r-1".to_owned(),
+            name: "admin".to_owned(),
+        }];
+        assert!(render_role_list("table", &roles).is_ok());
+        assert!(render_role_list("json", &roles).is_ok());
+        assert!(render_role_list("table", &[]).is_ok());
+    }
+
+    #[test]
+    fn resolve_password_source_accepts_literal_password() {
+        let source = resolve_password_source(Some("secret".to_owned()), false).expect("resolved");
+        assert_eq!(source, PasswordSource::Literal("secret".to_owned()));
+    }
+
+    #[test]
+    fn resolve_password_source_accepts_stdin() {
+        let source = resolve_password_source(None, true).expect("resolved");
+        assert_eq!(source, PasswordSource::Stdin);
+    }
+
+    #[test]
+    fn resolve_password_source_rejects_neither() {
+        let err = resolve_password_source(None, false).expect_err("should require a source");
+        assert!(matches!(err, UserCommandError::InvalidPasswordSource));
+    }
+
+    #[test]
+    fn resolve_password_source_rejects_both() {
+        let err = resolve_password_source(Some("secret".to_owned()), true)
+            .expect_err("should reject both sources");
+        assert!(matches!(err, UserCommandError::InvalidPasswordSource));
     }
 }
