@@ -1,6 +1,10 @@
-use ferriskey_cli_client::{CreateRealmRequest, FerriskeyClient, FerriskeyClientError, Realm};
+use ferriskey_cli_client::{
+    CreateRealmRequest, CreateRoleRequest, CreatedRole, FerriskeyClient, FerriskeyClientError,
+    Realm,
+};
 use ferriskey_cli_commands::{
-    RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmSubcommand,
+    RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmRoleCommand,
+    RealmRoleCreateArgs, RealmRoleListArgs, RealmRoleSubcommand, RealmSubcommand,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -33,8 +37,27 @@ pub fn run(
         RealmSubcommand::Delete(args) => {
             delete_realm(output_format, context_override, inline_context, args)
         }
+        RealmSubcommand::Role(command) => {
+            run_role(output_format, context_override, inline_context, command)
+        }
         RealmSubcommand::Import(args) => {
             import_realm(output_format, context_override, inline_context, args)
+        }
+    }
+}
+
+fn run_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    command: RealmRoleCommand,
+) -> Result<()> {
+    match command.command {
+        RealmRoleSubcommand::Create(args) => {
+            create_role(output_format, context_override, inline_context, args)
+        }
+        RealmRoleSubcommand::List(args) => {
+            list_roles(output_format, context_override, inline_context, args)
         }
     }
 }
@@ -81,6 +104,19 @@ struct RealmView {
     name: String,
 }
 
+#[derive(Debug, Serialize)]
+struct RoleView {
+    id: String,
+    name: String,
+}
+
+fn to_role_view(role: CreatedRole) -> RoleView {
+    RoleView {
+        id: role.id,
+        name: role.name,
+    }
+}
+
 fn resolve_context(
     context_override: Option<&str>,
     inline_context: Option<StoredContext>,
@@ -110,6 +146,14 @@ fn auth_client(context: &StoredContext) -> Result<FerriskeyClient> {
         .as_deref()
         .ok_or(RealmCommandError::MissingAuthRealm)?;
     Ok(session::authenticated_client(context, auth_realm)?)
+}
+
+/// Resolve the realm a command operates on: the explicit `--realm` argument,
+/// falling back to the context's default realm.
+fn resolve_realm(context: &StoredContext, realm: Option<String>) -> Result<String> {
+    realm
+        .or_else(|| context.realm.clone())
+        .ok_or(RealmCommandError::MissingAuthRealm)
 }
 
 fn to_view(realm: Realm) -> RealmView {
@@ -177,6 +221,38 @@ fn delete_realm(
     let client = auth_client(&context)?;
     client.delete_realm(&args.name)?;
     render_message(output_format, &format!("realm '{}' deleted", args.name))
+}
+
+fn create_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: RealmRoleCreateArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = auth_client(&context)?;
+    let request = CreateRoleRequest {
+        name: args.name,
+        description: args.description,
+        permissions: args.permissions,
+    };
+    let role = client.create_role(&realm, &request)?;
+    render_role(output_format, to_role_view(role))
+}
+
+fn list_roles(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: RealmRoleListArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = auth_client(&context)?;
+    let roles = client.list_realm_roles(&realm)?;
+    let views: Vec<RoleView> = roles.into_iter().map(to_role_view).collect();
+    render_role_list(output_format, &views)
 }
 
 fn import_realm(
@@ -364,6 +440,79 @@ fn render_realm(output_format: &str, realm: RealmView) -> Result<()> {
     }
 }
 
+fn render_role(output_format: &str, role: RoleView) -> Result<()> {
+    match output_format {
+        "table" => {
+            println!("id: {}", role.id);
+            println!("name: {}", role.name);
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&role)
+                    .map_err(|source| RealmCommandError::SerializeJson { source })?
+            );
+            Ok(())
+        }
+        "yaml" => {
+            println!(
+                "{}",
+                serde_yaml::to_string(&role)
+                    .map_err(|source| RealmCommandError::SerializeYaml { source })?
+            );
+            Ok(())
+        }
+        _ => Err(RealmCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
+fn render_role_list(output_format: &str, roles: &[RoleView]) -> Result<()> {
+    match output_format {
+        "table" => {
+            let name_width = roles
+                .iter()
+                .map(|r| r.name.len())
+                .max()
+                .unwrap_or(0)
+                .max("NAME".len());
+            let id_width = roles
+                .iter()
+                .map(|r| r.id.len())
+                .max()
+                .unwrap_or(0)
+                .max("ID".len());
+
+            println!("{:<name_width$}  {:<id_width$}", "NAME", "ID");
+            for r in roles {
+                println!("{:<name_width$}  {:<id_width$}", r.name, r.id);
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(roles)
+                    .map_err(|source| RealmCommandError::SerializeJson { source })?
+            );
+            Ok(())
+        }
+        "yaml" => {
+            println!(
+                "{}",
+                serde_yaml::to_string(roles)
+                    .map_err(|source| RealmCommandError::SerializeYaml { source })?
+            );
+            Ok(())
+        }
+        _ => Err(RealmCommandError::UnsupportedOutputFormat(
+            output_format.to_owned(),
+        )),
+    }
+}
+
 fn render_message(output_format: &str, message: &str) -> Result<()> {
     match output_format {
         "table" => {
@@ -454,5 +603,33 @@ mod tests {
     fn render_realm_list_rejects_unknown_format() {
         let err = render_realm_list("xml", &[]).expect_err("unknown format should error");
         assert!(matches!(err, RealmCommandError::UnsupportedOutputFormat(_)));
+    }
+
+    #[test]
+    fn render_role_list_table_and_json_succeed() {
+        let roles = vec![RoleView {
+            id: "r-1".to_owned(),
+            name: "admin".to_owned(),
+        }];
+        assert!(render_role_list("table", &roles).is_ok());
+        assert!(render_role_list("json", &roles).is_ok());
+        assert!(render_role_list("table", &[]).is_ok());
+    }
+
+    #[test]
+    fn render_role_list_rejects_unknown_format() {
+        let err = render_role_list("xml", &[]).expect_err("unknown format should error");
+        assert!(matches!(err, RealmCommandError::UnsupportedOutputFormat(_)));
+    }
+
+    #[test]
+    fn to_role_view_maps_id_and_name() {
+        let role = CreatedRole {
+            id: "r-1".to_owned(),
+            name: "admin".to_owned(),
+        };
+        let view = to_role_view(role);
+        assert_eq!(view.id, "r-1");
+        assert_eq!(view.name, "admin");
     }
 }

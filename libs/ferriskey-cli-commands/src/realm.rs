@@ -21,8 +21,54 @@ pub enum RealmSubcommand {
     Create(RealmNameArgs),
     /// Delete a realm.
     Delete(RealmDeleteArgs),
+    /// Manage realm roles.
+    Role(RealmRoleCommand),
     /// Import a realm (settings, clients, roles, users) from an external source.
     Import(RealmImportArgs),
+}
+
+/// Manage realm roles.
+#[derive(Debug, Args)]
+pub struct RealmRoleCommand {
+    /// Role command to execute.
+    #[command(subcommand)]
+    pub command: RealmRoleSubcommand,
+}
+
+/// Available realm role commands.
+#[derive(Debug, Subcommand)]
+pub enum RealmRoleSubcommand {
+    /// Create a realm role.
+    Create(RealmRoleCreateArgs),
+    /// List realm roles.
+    List(RealmRoleListArgs),
+}
+
+/// Arguments for `realm role create`.
+#[derive(Debug, Args)]
+pub struct RealmRoleCreateArgs {
+    /// Role name.
+    pub name: String,
+
+    /// Role description.
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// Permission granted by the role. Repeat for multiple permissions.
+    #[arg(long = "permission")]
+    pub permissions: Vec<String>,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+}
+
+/// Arguments for `realm role list`.
+#[derive(Debug, Args)]
+pub struct RealmRoleListArgs {
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
 }
 
 /// Arguments using a realm name.
