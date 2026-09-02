@@ -15,7 +15,8 @@ pub use self::context::{
 pub use self::login::LoginCommand;
 pub use self::realm::{
     ImportSource, RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmRoleCommand,
-    RealmRoleCreateArgs, RealmRoleListArgs, RealmRoleSubcommand, RealmSubcommand,
+    RealmRoleCreateArgs, RealmRoleDeleteArgs, RealmRoleGetArgs, RealmRoleListArgs,
+    RealmRoleSubcommand, RealmSubcommand,
 };
 pub use self::source::{
     SourceAddArgs, SourceCommand, SourceKind, SourceRemoveArgs, SourceSubcommand,

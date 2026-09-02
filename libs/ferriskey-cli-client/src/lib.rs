@@ -499,6 +499,53 @@ impl FerriskeyClient {
         self.get_list(&self.endpoint(&format!("realms/{realm}/roles")))
     }
 
+    pub fn delete_role(&self, realm: &str, role_id: &str) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .delete(self.endpoint(&format!("realms/{realm}/roles/{role_id}")))
+            .bearer_auth(&self.token)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn list_client_roles(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+    ) -> Result<Vec<CreatedRole>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/roles")))
+    }
+
+    pub fn delete_client_role(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        role_id: &str,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .delete(self.endpoint(&format!(
+                "realms/{realm}/clients/{client_uuid}/roles/{role_id}"
+            )))
+            .bearer_auth(&self.token)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
     pub fn create_client_role(
         &self,
         realm: &str,
