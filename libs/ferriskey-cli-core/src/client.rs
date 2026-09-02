@@ -114,24 +114,28 @@ fn delete_client(
     inline_context: Option<StoredContext>,
     args: ClientDeleteArgs,
 ) -> Result<()> {
-    confirm(
-        &format!("Delete client '{}'?", args.client_id),
-        args.force,
-    )?;
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
     let client = auth_client(&context)?;
     let found = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
-
     let uuid = found
         .id
+        .clone()
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+    let resolved_client_id = found.client_id.unwrap_or_else(|| args.client_id.clone());
+
+    // Show what is actually about to be deleted, not just what was asked
+    // for — the two can differ if the lookup resolved something unexpected.
+    confirm(
+        &format!("Delete client '{resolved_client_id}' (id: {uuid})?"),
+        args.force,
+    )?;
     client.delete_client(&realm, &uuid)?;
     render_message(
         output_format,
-        &format!("client '{}' deleted", args.client_id),
+        &format!("client '{resolved_client_id}' deleted"),
     )
 }
 

@@ -332,18 +332,17 @@ impl FerriskeyClient {
         Ok(())
     }
 
+    /// The server ignores the `clientId` query filter on this route and
+    /// always returns the full list, so the match is done client-side.
     pub fn get_client(
         &self,
         realm: &str,
         client_id: &str,
     ) -> Result<Option<ClientRepresentation>, FerriskeyClientError> {
-        let url = format!(
-            "{}?clientId={}",
-            self.endpoint(&format!("realms/{realm}/clients")),
-            client_id
-        );
-        let mut results: Vec<ClientRepresentation> = self.get_list(&url)?;
-        Ok(results.drain(..).next())
+        let results = self.list_clients(realm)?;
+        Ok(results
+            .into_iter()
+            .find(|client| client.client_id.as_deref() == Some(client_id)))
     }
 
     pub fn list_users(&self, realm: &str) -> Result<Vec<UserRepresentation>, FerriskeyClientError> {
