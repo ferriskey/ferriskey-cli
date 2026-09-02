@@ -1,5 +1,5 @@
 use ferriskey_cli_client::{
-    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClientError,
+    ClientRepresentation, CreateClientRequest, CreatedClient, FerriskeyClient, FerriskeyClientError,
 };
 use ferriskey_cli_commands::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
@@ -56,6 +56,10 @@ pub enum ClientCommandError {
         "realm is required: pass '--realm' or configure a default realm on the selected context"
     )]
     MissingRealm,
+    #[error(
+        "auth realm is required: configure a default realm on the selected context ('ferris-ctl context add --realm <realm>')"
+    )]
+    MissingAuthRealm,
     #[error("unsupported output format: {0}")]
     UnsupportedOutputFormat(String),
     #[error("failed to serialize JSON output")]
@@ -116,7 +120,7 @@ fn delete_client(
     )?;
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let client = session::authenticated_client(&context, &realm)?;
+    let client = auth_client(&context)?;
     let found = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
@@ -139,7 +143,7 @@ fn get_client(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let client = session::authenticated_client(&context, &realm)?;
+    let client = auth_client(&context)?;
     let result = client
         .get_client(&realm, &args.client_id)?
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
@@ -155,7 +159,7 @@ fn list_clients(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let client = session::authenticated_client(&context, &realm)?;
+    let client = auth_client(&context)?;
     let clients = client.list_clients(&realm)?;
     let views = clients.into_iter().map(to_view).collect::<Vec<_>>();
 
@@ -170,7 +174,7 @@ fn create_client(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm.clone())?;
-    let client = session::authenticated_client(&context, &realm)?;
+    let client = auth_client(&context)?;
     let request = build_create_client_request(args);
     let created = client.create_client(&realm, &request)?;
 
@@ -209,6 +213,18 @@ fn resolve_realm(context: &StoredContext, realm: Option<String>) -> Result<Strin
     realm
         .or_else(|| context.realm.clone())
         .ok_or(ClientCommandError::MissingRealm)
+}
+
+/// Authenticate against the context's home realm — where the context's
+/// client_id/client_secret are registered — regardless of which realm the
+/// command targets via `--realm`. The server, not the CLI, decides whether
+/// the resulting token can act on the target realm.
+fn auth_client(context: &StoredContext) -> Result<FerriskeyClient> {
+    let auth_realm = context
+        .realm
+        .as_deref()
+        .ok_or(ClientCommandError::MissingAuthRealm)?;
+    Ok(session::authenticated_client(context, auth_realm)?)
 }
 
 fn to_view(client: ClientRepresentation) -> ClientView {
@@ -457,6 +473,23 @@ mod tests {
     use super::*;
     use crate::config::StoredContext;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn auth_client_requires_realm_on_context() {
+        // Regression: auth_client must authenticate against the context's
+        // home realm, never a command's target `--realm` (which it doesn't
+        // even take as a parameter) — a context without a home realm can't
+        // authenticate at all, regardless of any target realm resolved
+        // elsewhere.
+        let context = StoredContext {
+            url: "http://localhost:3333".to_owned(),
+            client_id: "cli".to_owned(),
+            client_secret: Some("secret".to_owned()),
+            realm: None,
+        };
+        let err = auth_client(&context).expect_err("missing realm should error");
+        assert!(matches!(err, ClientCommandError::MissingAuthRealm));
+    }
 
     #[test]
     fn select_context_uses_active_context_by_default() {

@@ -57,6 +57,10 @@ pub enum UserCommandError {
         "realm is required: pass '--realm' or configure a default realm on the selected context"
     )]
     MissingRealm,
+    #[error(
+        "auth realm is required: configure a default realm on the selected context ('ferris-ctl context add --realm <realm>')"
+    )]
+    MissingAuthRealm,
     #[error("user '{0}' not found")]
     UserNotFound(String),
     #[error("role '{0}' not found in realm")]
@@ -114,8 +118,16 @@ fn resolve_realm(context: &StoredContext, realm: Option<String>) -> Result<Strin
         .ok_or(UserCommandError::MissingRealm)
 }
 
-fn authenticate(context: &StoredContext, realm: &str) -> Result<FerriskeyClient> {
-    Ok(session::authenticated_client(context, realm)?)
+/// Authenticate against the context's home realm — where the context's
+/// client_id/client_secret are registered — regardless of which realm the
+/// command targets via `--realm`. The server, not the CLI, decides whether
+/// the resulting token can act on the target realm.
+fn auth_client(context: &StoredContext) -> Result<FerriskeyClient> {
+    let auth_realm = context
+        .realm
+        .as_deref()
+        .ok_or(UserCommandError::MissingAuthRealm)?;
+    Ok(session::authenticated_client(context, auth_realm)?)
 }
 
 fn find_user(client: &FerriskeyClient, realm: &str, username: &str) -> Result<UserRepresentation> {
@@ -145,7 +157,7 @@ fn list_users(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let users = client.list_users(&realm)?;
     let views: Vec<UserView> = users.into_iter().map(to_view).collect();
     render_user_list(output_format, &views)
@@ -159,7 +171,7 @@ fn get_user(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     render_user(output_format, to_view(user))
 }
@@ -172,7 +184,7 @@ fn create_user(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let request = CreateUserRequest {
         username: args.username,
         firstname: args.firstname,
@@ -196,7 +208,7 @@ fn delete_user(
     )?;
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     client.delete_user(&realm, &user.id)?;
     render_message(output_format, &format!("user '{}' deleted", args.username))
@@ -210,7 +222,7 @@ fn assign_role(
 ) -> Result<()> {
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
-    let client = authenticate(&context, &realm)?;
+    let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
     let role = client
         .list_realm_roles(&realm)?
@@ -353,6 +365,18 @@ mod tests {
             client_secret: Some("secret".to_owned()),
             realm: realm.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn auth_client_requires_realm_on_context() {
+        // Regression: auth_client must authenticate against the context's
+        // home realm, never a command's target `--realm` (which it doesn't
+        // even take as a parameter) — a context without a home realm can't
+        // authenticate at all, regardless of any target realm resolved
+        // elsewhere.
+        let context = make_context(None);
+        let err = auth_client(&context).expect_err("missing realm should error");
+        assert!(matches!(err, UserCommandError::MissingAuthRealm));
     }
 
     #[test]
