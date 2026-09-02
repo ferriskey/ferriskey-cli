@@ -4,7 +4,8 @@ use ferriskey_cli_client::{
 };
 use ferriskey_cli_commands::{
     RealmCommand, RealmDeleteArgs, RealmImportArgs, RealmNameArgs, RealmRoleCommand,
-    RealmRoleCreateArgs, RealmRoleListArgs, RealmRoleSubcommand, RealmSubcommand,
+    RealmRoleCreateArgs, RealmRoleDeleteArgs, RealmRoleGetArgs, RealmRoleListArgs,
+    RealmRoleSubcommand, RealmSubcommand,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -59,6 +60,12 @@ fn run_role(
         RealmRoleSubcommand::List(args) => {
             list_roles(output_format, context_override, inline_context, args)
         }
+        RealmRoleSubcommand::Get(args) => {
+            get_role(output_format, context_override, inline_context, args)
+        }
+        RealmRoleSubcommand::Delete(args) => {
+            delete_role(output_format, context_override, inline_context, args)
+        }
     }
 }
 
@@ -82,6 +89,10 @@ pub enum RealmCommandError {
     MissingAuthRealm,
     #[error("realm '{0}' not found")]
     RealmNotFound(String),
+    #[error("client '{0}' not found in realm")]
+    ClientNotFound(String),
+    #[error("role '{0}' not found")]
+    RoleNotFound(String),
     #[error(transparent)]
     Import(Box<import::ImportError>),
     #[error("unsupported output format: {0}")]
@@ -223,6 +234,31 @@ fn delete_realm(
     render_message(output_format, &format!("realm '{}' deleted", args.name))
 }
 
+/// Resolve a client id (e.g. `my-app`) to the client's uuid, as required by
+/// the client-role endpoints.
+fn resolve_client_uuid(client: &FerriskeyClient, realm: &str, client_id: &str) -> Result<String> {
+    client
+        .get_client(realm, client_id)?
+        .and_then(|found| found.id)
+        .ok_or_else(|| RealmCommandError::ClientNotFound(client_id.to_owned()))
+}
+
+/// List roles in the scope selected by `--client`: a specific client's roles
+/// when given, realm roles otherwise.
+fn list_roles_in_scope(
+    client: &FerriskeyClient,
+    realm: &str,
+    client_id: Option<&str>,
+) -> Result<Vec<CreatedRole>> {
+    match client_id {
+        Some(client_id) => {
+            let uuid = resolve_client_uuid(client, realm, client_id)?;
+            Ok(client.list_client_roles(realm, &uuid)?)
+        }
+        None => Ok(client.list_realm_roles(realm)?),
+    }
+}
+
 fn create_role(
     output_format: &str,
     context_override: Option<&str>,
@@ -237,7 +273,13 @@ fn create_role(
         description: args.description,
         permissions: args.permissions,
     };
-    let role = client.create_role(&realm, &request)?;
+    let role = match args.client {
+        Some(client_id) => {
+            let uuid = resolve_client_uuid(&client, &realm, &client_id)?;
+            client.create_client_role(&realm, &uuid, &request)?
+        }
+        None => client.create_role(&realm, &request)?,
+    };
     render_role(output_format, to_role_view(role))
 }
 
@@ -250,9 +292,55 @@ fn list_roles(
     let context = resolve_context(context_override, inline_context)?;
     let realm = resolve_realm(&context, args.realm)?;
     let client = auth_client(&context)?;
-    let roles = client.list_realm_roles(&realm)?;
+    let roles = list_roles_in_scope(&client, &realm, args.client.as_deref())?;
     let views: Vec<RoleView> = roles.into_iter().map(to_role_view).collect();
     render_role_list(output_format, &views)
+}
+
+fn get_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: RealmRoleGetArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = auth_client(&context)?;
+    let role = list_roles_in_scope(&client, &realm, args.client.as_deref())?
+        .into_iter()
+        .find(|r| r.name == args.name)
+        .ok_or_else(|| RealmCommandError::RoleNotFound(args.name.clone()))?;
+    render_role(output_format, to_role_view(role))
+}
+
+fn delete_role(
+    output_format: &str,
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: RealmRoleDeleteArgs,
+) -> Result<()> {
+    confirm(&format!("Delete role '{}'?", args.name), args.force)?;
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm)?;
+    let client = auth_client(&context)?;
+    let client_uuid = args
+        .client
+        .as_deref()
+        .map(|client_id| resolve_client_uuid(&client, &realm, client_id))
+        .transpose()?;
+    let roles = match &client_uuid {
+        Some(uuid) => client.list_client_roles(&realm, uuid)?,
+        None => client.list_realm_roles(&realm)?,
+    };
+    let role = roles
+        .into_iter()
+        .find(|r| r.name == args.name)
+        .ok_or_else(|| RealmCommandError::RoleNotFound(args.name.clone()))?;
+    match &client_uuid {
+        Some(uuid) => client.delete_client_role(&realm, uuid, &role.id)?,
+        None => client.delete_role(&realm, &role.id)?,
+    }
+    render_message(output_format, &format!("role '{}' deleted", args.name))
 }
 
 fn import_realm(

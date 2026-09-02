@@ -38,10 +38,14 @@ pub struct RealmRoleCommand {
 /// Available realm role commands.
 #[derive(Debug, Subcommand)]
 pub enum RealmRoleSubcommand {
-    /// Create a realm role.
+    /// Create a realm or client role.
     Create(RealmRoleCreateArgs),
-    /// List realm roles.
+    /// List realm or client roles.
     List(RealmRoleListArgs),
+    /// Show a realm or client role's details.
+    Get(RealmRoleGetArgs),
+    /// Delete a realm or client role.
+    Delete(RealmRoleDeleteArgs),
 }
 
 /// Arguments for `realm role create`.
@@ -61,6 +65,10 @@ pub struct RealmRoleCreateArgs {
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+
+    /// Create a client role instead of a realm role, scoped to this client id.
+    #[arg(long)]
+    pub client: Option<String>,
 }
 
 /// Arguments for `realm role list`.
@@ -69,6 +77,44 @@ pub struct RealmRoleListArgs {
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+
+    /// List roles of this client instead of realm roles.
+    #[arg(long)]
+    pub client: Option<String>,
+}
+
+/// Arguments for `realm role get`.
+#[derive(Debug, Args)]
+pub struct RealmRoleGetArgs {
+    /// Role name.
+    pub name: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+
+    /// Look up a client role instead of a realm role, scoped to this client id.
+    #[arg(long)]
+    pub client: Option<String>,
+}
+
+/// Arguments for `realm role delete`.
+#[derive(Debug, Args)]
+pub struct RealmRoleDeleteArgs {
+    /// Role name.
+    pub name: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
+
+    /// Delete a client role instead of a realm role, scoped to this client id.
+    #[arg(long)]
+    pub client: Option<String>,
+
+    /// Skip the confirmation prompt (required in non-interactive shells).
+    #[arg(long, short = 'f', default_value_t = false)]
+    pub force: bool,
 }
 
 /// Arguments using a realm name.
