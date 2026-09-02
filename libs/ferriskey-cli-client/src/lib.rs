@@ -658,7 +658,7 @@ impl FerriskeyClient {
     ) -> Result<(), FerriskeyClientError> {
         let response = self
             .http
-            .put(self.endpoint(&format!("realms/{realm}/users/{user_id}/password")))
+            .put(self.endpoint(&format!("realms/{realm}/users/{user_id}/reset-password")))
             .bearer_auth(&self.token)
             .json(request)
             .send()?;
