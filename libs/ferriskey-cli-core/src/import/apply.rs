@@ -52,9 +52,12 @@ pub fn apply_blueprint(
     match client.create_realm(&ferriskey_cli_client::CreateRealmRequest { name: realm.to_owned() })
     {
         Ok(_) => report.realm_created = true,
-        Err(e) if is_conflict(&e) => report
-            .warnings
-            .push(format!("realm '{realm}' already exists, reusing it")),
+        Err(e) if is_conflict(&e) => {
+            report.already_present += 1;
+            report
+                .warnings
+                .push(format!("realm '{realm}' already exists, reusing it"));
+        }
         Err(e) => return Err(e.into()),
     }
 
@@ -75,9 +78,12 @@ pub fn apply_blueprint(
                 role_ids.insert(created.name, created.id);
                 report.roles_created += 1;
             }
-            Err(e) if is_conflict(&e) => report
-                .warnings
-                .push(format!("realm role '{}' already exists", role.name)),
+            Err(e) if is_conflict(&e) => {
+                report.already_present += 1;
+                report
+                    .warnings
+                    .push(format!("realm role '{}' already exists", role.name));
+            }
             Err(e) => return Err(e.into()),
         }
     }
@@ -114,10 +120,13 @@ pub fn apply_blueprint(
             };
             match client.add_client_redirect(realm, &client_uuid, &request) {
                 Ok(()) => report.redirects_created += 1,
-                Err(e) if is_conflict(&e) => report.warnings.push(format!(
-                    "redirect '{uri}' already exists on client '{}'",
-                    client_bp.client_id
-                )),
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "redirect '{uri}' already exists on client '{}'",
+                        client_bp.client_id
+                    ));
+                }
                 Err(e) => return Err(e.into()),
             }
         }
@@ -125,10 +134,13 @@ pub fn apply_blueprint(
         for role in &client_bp.roles {
             match client.create_client_role(realm, &client_uuid, &role_request(role)) {
                 Ok(_) => report.client_roles_created += 1,
-                Err(e) if is_conflict(&e) => report.warnings.push(format!(
-                    "client role '{}' already exists on client '{}'",
-                    role.name, client_bp.client_id
-                )),
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "client role '{}' already exists on client '{}'",
+                        role.name, client_bp.client_id
+                    ));
+                }
                 Err(e) => return Err(e.into()),
             }
         }
@@ -142,6 +154,7 @@ pub fn apply_blueprint(
                 Some(created.id)
             }
             Err(e) if is_conflict(&e) => {
+                report.already_present += 1;
                 report
                     .warnings
                     .push(format!("user '{}' already exists, reusing it", user.username));
@@ -155,10 +168,13 @@ pub fn apply_blueprint(
             match role_ids.get(role_name) {
                 Some(role_id) => match client.assign_user_role(realm, &user_id, role_id) {
                     Ok(()) => report.role_assignments += 1,
-                    Err(e) if is_conflict(&e) => report.warnings.push(format!(
-                        "user '{}' already has role '{role_name}'",
-                        user.username
-                    )),
+                    Err(e) if is_conflict(&e) => {
+                        report.already_present += 1;
+                        report.warnings.push(format!(
+                            "user '{}' already has role '{role_name}'",
+                            user.username
+                        ));
+                    }
                     Err(e) => return Err(e.into()),
                 },
                 None => report.warnings.push(format!(
@@ -186,6 +202,7 @@ fn resolve_client(
             Ok(Some(created.id))
         }
         Err(e) if is_conflict(&e) => {
+            report.already_present += 1;
             report
                 .warnings
                 .push(format!("client '{}' already exists, reusing it", client_bp.client_id));
@@ -262,12 +279,19 @@ fn user_request(user: &super::UserBlueprint) -> CreateUserRequest {
 }
 
 /// Whether an API error means "this entity already exists" — treated as a skip.
+///
+/// Some already-deployed servers surface a duplicate-key unique-constraint
+/// violation as a raw `500` instead of a proper `409` (e.g. `realms_name_key`
+/// on a duplicate realm name); recognizing it here lets an import converge on
+/// replay without needing every server upgraded first.
 fn is_conflict(error: &FerriskeyClientError) -> bool {
     matches!(
         error,
         FerriskeyClientError::Api { status, body }
             if *status == StatusCode::CONFLICT
                 || (*status == StatusCode::BAD_REQUEST && body.to_lowercase().contains("exist"))
+                || (*status == StatusCode::INTERNAL_SERVER_ERROR
+                    && body.to_lowercase().contains("unique constraint"))
     )
 }
 
@@ -340,5 +364,48 @@ mod tests {
         let client = FerriskeyClient::new("http://localhost:3333", "", "").unwrap();
         let report = apply_blueprint(&client, &bp, true).unwrap();
         assert!(!report.settings_applied);
+    }
+
+    fn api_error(status: StatusCode, body: &str) -> FerriskeyClientError {
+        FerriskeyClientError::Api {
+            status,
+            body: body.to_owned(),
+        }
+    }
+
+    #[test]
+    fn is_conflict_recognizes_409() {
+        assert!(is_conflict(&api_error(StatusCode::CONFLICT, "")));
+    }
+
+    #[test]
+    fn is_conflict_recognizes_400_with_exist_in_body() {
+        assert!(is_conflict(&api_error(
+            StatusCode::BAD_REQUEST,
+            "realm already exists"
+        )));
+    }
+
+    #[test]
+    fn is_conflict_recognizes_500_unique_constraint_violation() {
+        // A raw Postgres unique-constraint violation surfaced as a 500 by
+        // older, not-yet-patched servers (e.g. a duplicate realm name).
+        assert!(is_conflict(&api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "duplicate key value violates unique constraint \"realms_name_key\""
+        )));
+    }
+
+    #[test]
+    fn is_conflict_rejects_unrelated_500() {
+        assert!(!is_conflict(&api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal server error"
+        )));
+    }
+
+    #[test]
+    fn is_conflict_rejects_unrelated_400() {
+        assert!(!is_conflict(&api_error(StatusCode::BAD_REQUEST, "invalid input")));
     }
 }
