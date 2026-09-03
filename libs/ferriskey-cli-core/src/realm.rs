@@ -408,6 +408,15 @@ fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
                 println!("  roles created:        {}", report.roles_created);
                 println!("  clients created:      {}", report.clients_created);
                 println!("  redirect uris added:  {}", report.redirects_created);
+                println!(
+                    "  post-logout uris added: {}",
+                    report.post_logout_redirects_created
+                );
+                println!("  web origins added:    {}", report.web_origins_created);
+                println!(
+                    "  client settings applied: {}",
+                    report.client_settings_applied
+                );
                 println!("  client roles created: {}", report.client_roles_created);
                 println!("  users created:        {}", report.users_created);
                 println!("  role assignments:     {}", report.role_assignments);

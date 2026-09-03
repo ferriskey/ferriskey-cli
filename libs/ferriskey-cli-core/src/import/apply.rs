@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use ferriskey_cli_client::{
     CreateClientRequest, CreateRedirectUriRequest, CreateRoleRequest, CreateUserRequest,
-    FerriskeyClient, FerriskeyClientError,
+    CreateWebOriginRequest, FerriskeyClient, FerriskeyClientError,
 };
 use reqwest::StatusCode;
 
@@ -40,6 +40,17 @@ pub fn apply_blueprint(
         report.roles_created = blueprint.roles.len();
         report.clients_created = blueprint.clients.len();
         report.redirects_created = blueprint.clients.iter().map(|c| c.redirect_uris.len()).sum();
+        report.post_logout_redirects_created = blueprint
+            .clients
+            .iter()
+            .map(|c| c.post_logout_redirect_uris.len())
+            .sum();
+        report.web_origins_created = blueprint.clients.iter().map(|c| c.web_origins.len()).sum();
+        report.client_settings_applied = blueprint
+            .clients
+            .iter()
+            .filter(|c| !c.to_settings_request().is_empty())
+            .count();
         report.client_roles_created = blueprint.clients.iter().map(|c| c.roles.len()).sum();
         report.users_created = blueprint.users.len();
         report.role_assignments = blueprint.users.iter().map(|u| u.roles.len()).sum();
@@ -129,6 +140,47 @@ pub fn apply_blueprint(
                 }
                 Err(e) => return Err(e.into()),
             }
+        }
+
+        for uri in &client_bp.post_logout_redirect_uris {
+            let request = CreateRedirectUriRequest {
+                value: uri.clone(),
+                enabled: true,
+            };
+            match client.add_client_post_logout_redirect(realm, &client_uuid, &request) {
+                Ok(()) => report.post_logout_redirects_created += 1,
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "post-logout redirect '{uri}' already exists on client '{}'",
+                        client_bp.client_id
+                    ));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        for origin in &client_bp.web_origins {
+            let request = CreateWebOriginRequest {
+                value: origin.clone(),
+            };
+            match client.add_client_web_origin(realm, &client_uuid, &request) {
+                Ok(()) => report.web_origins_created += 1,
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "web origin '{origin}' already exists on client '{}'",
+                        client_bp.client_id
+                    ));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        let settings_request = client_bp.to_settings_request();
+        if !settings_request.is_empty() {
+            client.update_client_settings(realm, &client_uuid, &settings_request)?;
+            report.client_settings_applied += 1;
         }
 
         for role in &client_bp.roles {
@@ -265,6 +317,7 @@ fn client_request(client_bp: &ClientBlueprint) -> CreateClientRequest {
         protocol: client_bp.protocol.clone(),
         public_client: client_bp.public_client,
         service_account_enabled: client_bp.service_account_enabled,
+        oauth_device_code_grant_enabled: client_bp.device_authorization_grant_enabled,
     }
 }
 
@@ -289,7 +342,9 @@ fn is_conflict(error: &FerriskeyClientError) -> bool {
         error,
         FerriskeyClientError::Api { status, body }
             if *status == StatusCode::CONFLICT
-                || (*status == StatusCode::BAD_REQUEST && body.to_lowercase().contains("exist"))
+                || (*status == StatusCode::BAD_REQUEST
+                    && (body.to_lowercase().contains("exist")
+                        || body.to_lowercase().contains("already registered")))
                 || (*status == StatusCode::INTERNAL_SERVER_ERROR
                     && body.to_lowercase().contains("unique constraint"))
     )
@@ -323,6 +378,14 @@ mod tests {
                 service_account_enabled: false,
                 direct_access_grants_enabled: false,
                 redirect_uris: vec!["https://a/*".to_owned(), "https://b/*".to_owned()],
+                post_logout_redirect_uris: vec!["https://a/bye".to_owned()],
+                web_origins: vec!["https://a".to_owned()],
+                device_authorization_grant_enabled: false,
+                require_pkce: Some(true),
+                access_token_lifetime: None,
+                refresh_token_lifetime: None,
+                id_token_lifetime: None,
+                temporary_token_lifetime: None,
                 roles: vec![RoleBlueprint {
                     name: "viewer".to_owned(),
                     ..Default::default()
@@ -351,6 +414,9 @@ mod tests {
         assert_eq!(report.roles_created, 1);
         assert_eq!(report.clients_created, 1);
         assert_eq!(report.redirects_created, 2);
+        assert_eq!(report.post_logout_redirects_created, 1);
+        assert_eq!(report.web_origins_created, 1);
+        assert_eq!(report.client_settings_applied, 1);
         assert_eq!(report.client_roles_created, 1);
         assert_eq!(report.users_created, 1);
         assert_eq!(report.role_assignments, 1);
@@ -383,6 +449,15 @@ mod tests {
         assert!(is_conflict(&api_error(
             StatusCode::BAD_REQUEST,
             "realm already exists"
+        )));
+    }
+
+    #[test]
+    fn is_conflict_recognizes_400_web_origin_already_registered() {
+        // Observed live: a duplicate web origin doesn't say "exist" at all.
+        assert!(is_conflict(&api_error(
+            StatusCode::BAD_REQUEST,
+            "Invalid web origin: this origin is already registered for the client"
         )));
     }
 

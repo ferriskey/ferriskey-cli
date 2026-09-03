@@ -197,6 +197,16 @@ fn map_client(client: KcClient, roles: Vec<RoleBlueprint>) -> ClientBlueprint {
         service_account_enabled: client.service_accounts_enabled.unwrap_or(false),
         direct_access_grants_enabled: client.direct_access_grants_enabled.unwrap_or(false),
         redirect_uris: client.redirect_uris.unwrap_or_default(),
+        // Keycloak carries these under a free-form `attributes` map with
+        // Keycloak-specific keys, not a plain field — not extracted here.
+        post_logout_redirect_uris: Vec::new(),
+        web_origins: Vec::new(),
+        device_authorization_grant_enabled: false,
+        require_pkce: None,
+        access_token_lifetime: None,
+        refresh_token_lifetime: None,
+        id_token_lifetime: None,
+        temporary_token_lifetime: None,
         roles,
     }
 }
