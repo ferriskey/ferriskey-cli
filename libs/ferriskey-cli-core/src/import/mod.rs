@@ -8,7 +8,9 @@
 pub mod apply;
 pub mod sources;
 
-use ferriskey_cli_client::{FerriskeyClientError, UpdateRealmSettingsRequest};
+use ferriskey_cli_client::{
+    FerriskeyClientError, UpdateClientSettingsRequest, UpdateRealmSettingsRequest,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -110,9 +112,37 @@ pub struct ClientBlueprint {
     pub direct_access_grants_enabled: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_logout_redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub web_origins: Vec<String>,
+    #[serde(default)]
+    pub device_authorization_grant_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_pkce: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token_lifetime: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token_lifetime: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token_lifetime: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporary_token_lifetime: Option<i64>,
     /// Client-scoped roles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<RoleBlueprint>,
+}
+
+impl ClientBlueprint {
+    pub fn to_settings_request(&self) -> UpdateClientSettingsRequest {
+        UpdateClientSettingsRequest {
+            require_pkce: self.require_pkce,
+            access_token_lifetime: self.access_token_lifetime,
+            refresh_token_lifetime: self.refresh_token_lifetime,
+            id_token_lifetime: self.id_token_lifetime,
+            temporary_token_lifetime: self.temporary_token_lifetime,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -160,6 +190,9 @@ pub struct ImportReport {
     pub roles_created: usize,
     pub clients_created: usize,
     pub redirects_created: usize,
+    pub post_logout_redirects_created: usize,
+    pub web_origins_created: usize,
+    pub client_settings_applied: usize,
     pub client_roles_created: usize,
     pub users_created: usize,
     pub role_assignments: usize,
@@ -239,6 +272,14 @@ mod tests {
                 service_account_enabled: false,
                 direct_access_grants_enabled: false,
                 redirect_uris: vec!["https://app.acme.test/*".to_owned()],
+                post_logout_redirect_uris: vec!["https://app.acme.test/bye".to_owned()],
+                web_origins: vec!["https://app.acme.test".to_owned()],
+                device_authorization_grant_enabled: true,
+                require_pkce: Some(true),
+                access_token_lifetime: Some(300),
+                refresh_token_lifetime: None,
+                id_token_lifetime: None,
+                temporary_token_lifetime: None,
                 roles: vec![],
             }],
             users: vec![UserBlueprint {

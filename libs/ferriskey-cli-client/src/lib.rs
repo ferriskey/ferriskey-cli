@@ -149,6 +149,7 @@ pub struct CreateClientRequest {
     pub protocol: String,
     pub public_client: bool,
     pub service_account_enabled: bool,
+    pub oauth_device_code_grant_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -229,6 +230,39 @@ pub struct CreatedRole {
 pub struct CreateRedirectUriRequest {
     pub value: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateWebOriginRequest {
+    pub value: String,
+}
+
+/// Partial update of a client's PKCE requirement and token lifetimes. Only the
+/// fields that are `Some` are sent. Applied via `PATCH`, unlike the rest of the
+/// client's settings which are only settable at creation time.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateClientSettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub require_pkce: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_token_lifetime: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary_token_lifetime: Option<i64>,
+}
+
+impl UpdateClientSettingsRequest {
+    /// Returns true when no field is set (nothing to send).
+    pub fn is_empty(&self) -> bool {
+        self.require_pkce.is_none()
+            && self.access_token_lifetime.is_none()
+            && self.refresh_token_lifetime.is_none()
+            && self.id_token_lifetime.is_none()
+            && self.temporary_token_lifetime.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -561,6 +595,77 @@ impl FerriskeyClient {
         let response = self
             .http
             .post(self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/redirects")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn add_client_post_logout_redirect(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        request: &CreateRedirectUriRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!(
+                "realms/{realm}/clients/{client_uuid}/post-logout-redirects"
+            )))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn add_client_web_origin(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        request: &CreateWebOriginRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/web-origins")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    /// Update a client's PKCE requirement / token lifetimes. Unlike most of a
+    /// client's settings (only settable at creation), these are only settable
+    /// via this PATCH.
+    pub fn update_client_settings(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+        request: &UpdateClientSettingsRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .patch(self.endpoint(&format!("realms/{realm}/clients/{client_uuid}")))
             .bearer_auth(&self.token)
             .json(request)
             .send()?;

@@ -309,6 +309,7 @@ fn build_create_client_request(args: ClientCreateArgs) -> CreateClientRequest {
         public_client,
         service_account_enabled,
         direct_access_grants_enabled: args.direct_access_grants_enabled,
+        oauth_device_code_grant_enabled: false,
     }
 }
 

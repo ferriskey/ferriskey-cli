@@ -197,6 +197,15 @@ fn map_app(app: ZitadelApp) -> ClientBlueprint {
         service_account_enabled: false,
         direct_access_grants_enabled: false,
         redirect_uris: oidc.redirect_uris.unwrap_or_default(),
+        // Not carried over from Zitadel — not extracted here.
+        post_logout_redirect_uris: Vec::new(),
+        web_origins: Vec::new(),
+        device_authorization_grant_enabled: false,
+        require_pkce: None,
+        access_token_lifetime: None,
+        refresh_token_lifetime: None,
+        id_token_lifetime: None,
+        temporary_token_lifetime: None,
         roles: Vec::new(),
     }
 }
@@ -227,6 +236,14 @@ fn map_service_account(user_name: String, machine: Machine) -> ClientBlueprint {
         service_account_enabled: true,
         direct_access_grants_enabled: false,
         redirect_uris: Vec::new(),
+        post_logout_redirect_uris: Vec::new(),
+        web_origins: Vec::new(),
+        device_authorization_grant_enabled: false,
+        require_pkce: None,
+        access_token_lifetime: None,
+        refresh_token_lifetime: None,
+        id_token_lifetime: None,
+        temporary_token_lifetime: None,
         roles: Vec::new(),
     }
 }
