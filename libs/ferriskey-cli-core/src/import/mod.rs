@@ -163,6 +163,9 @@ pub struct ImportReport {
     pub client_roles_created: usize,
     pub users_created: usize,
     pub role_assignments: usize,
+    /// Entities skipped because they already existed — distinguishes a
+    /// converging replay from a run that did nothing.
+    pub already_present: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }

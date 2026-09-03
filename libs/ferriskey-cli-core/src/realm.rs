@@ -411,6 +411,7 @@ fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
                 println!("  client roles created: {}", report.client_roles_created);
                 println!("  users created:        {}", report.users_created);
                 println!("  role assignments:     {}", report.role_assignments);
+                println!("  already present:      {}", report.already_present);
                 if !report.warnings.is_empty() {
                     println!("  warnings:");
                     for warning in &report.warnings {
