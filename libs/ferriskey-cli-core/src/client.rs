@@ -3,7 +3,7 @@ use ferriskey_cli_client::{
 };
 use ferriskey_cli_commands::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
-    ClientSubcommand, ClientType,
+    ClientSecretArgs, ClientSubcommand, ClientType,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -32,6 +32,9 @@ pub fn run(
         }
         ClientSubcommand::Delete(args) => {
             delete_client(output_format, context_override, inline_context, args)
+        }
+        ClientSubcommand::Secret(args) => {
+            get_client_secret(context_override, inline_context, args)
         }
     }
 }
@@ -153,6 +156,29 @@ fn get_client(
         .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
 
     render_client_detail(output_format, to_detail_view(result, realm))
+}
+
+/// Reads a confidential client's secret. Deliberately ignores `--output`:
+/// the secret is printed bare on stdout so it can be piped or captured
+/// directly (`ferris-ctl client secret x > secret.txt`), with everything
+/// else — status, prompts, errors — kept on stderr.
+fn get_client_secret(
+    context_override: Option<&str>,
+    inline_context: Option<StoredContext>,
+    args: ClientSecretArgs,
+) -> Result<()> {
+    let context = resolve_context(context_override, inline_context)?;
+    let realm = resolve_realm(&context, args.realm.clone())?;
+    let client = auth_client(&context)?;
+    let found = client
+        .get_client(&realm, &args.client_id)?
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+    let uuid = found
+        .id
+        .ok_or_else(|| ClientCommandError::ClientNotFound(args.client_id.clone()))?;
+    let secret = client.get_client_secret(&realm, &uuid)?;
+    println!("{secret}");
+    Ok(())
 }
 
 fn list_clients(

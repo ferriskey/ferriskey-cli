@@ -19,6 +19,8 @@ pub enum ClientSubcommand {
     Create(ClientCreateArgs),
     /// Delete a client.
     Delete(ClientDeleteArgs),
+    /// Print a confidential client's secret to stdout.
+    Secret(ClientSecretArgs),
 }
 
 /// Arguments for listing clients.
@@ -69,6 +71,17 @@ pub struct ClientCreateArgs {
     /// Whether direct access grants are enabled.
     #[arg(long = "direct-access-grants", default_value_t = false)]
     pub direct_access_grants_enabled: bool,
+}
+
+/// Arguments for reading a client's secret.
+#[derive(Debug, Args)]
+pub struct ClientSecretArgs {
+    /// Client identifier.
+    pub client_id: String,
+
+    /// Realm name. Defaults to the selected context realm.
+    #[arg(long)]
+    pub realm: Option<String>,
 }
 
 /// Supported client types.
