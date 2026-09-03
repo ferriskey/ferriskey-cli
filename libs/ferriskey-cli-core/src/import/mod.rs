@@ -200,8 +200,19 @@ pub struct ImportReport {
     /// Entities skipped because they already existed — distinguishes a
     /// converging replay from a run that did nothing.
     pub already_present: usize,
+    /// Secret of every confidential client the import touched, so the
+    /// import is self-sufficient — the caller doesn't need a separate
+    /// `client secret` call per client.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub client_secrets: Vec<ClientSecretEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientSecretEntry {
+    pub client_id: String,
+    pub secret: String,
 }
 
 #[derive(Debug, Error)]

@@ -7,7 +7,7 @@ mod user;
 
 pub use self::client::{
     ClientCommand, ClientCreateArgs, ClientDeleteArgs, ClientGetArgs, ClientListArgs,
-    ClientSubcommand, ClientType,
+    ClientSecretArgs, ClientSubcommand, ClientType,
 };
 pub use self::context::{
     ContextAddArgs, ContextCommand, ContextRemoveArgs, ContextSubcommand, ContextUseArgs,

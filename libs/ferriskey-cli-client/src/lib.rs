@@ -379,6 +379,19 @@ impl FerriskeyClient {
             .find(|client| client.client_id.as_deref() == Some(client_id)))
     }
 
+    /// Read a confidential client's secret. Unlike the client read endpoints,
+    /// which mask it as `"***"`, this dedicated (server-audited) endpoint
+    /// returns the raw value.
+    pub fn get_client_secret(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+    ) -> Result<String, FerriskeyClientError> {
+        let payload: ClientSecretPayload =
+            self.get_json(&self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/client-secret")))?;
+        Ok(payload.into_secret())
+    }
+
     pub fn list_users(&self, realm: &str) -> Result<Vec<UserRepresentation>, FerriskeyClientError> {
         self.get_list(&self.endpoint(&format!("realms/{realm}/users")))
     }
@@ -972,4 +985,58 @@ enum ListPayload<T> {
 #[derive(Debug, Deserialize)]
 struct DataEnvelope<T> {
     data: T,
+}
+
+/// Shape of the client-secret endpoint's response isn't documented; this
+/// accepts the plausible variants (bare string, `{secret}`, and either
+/// enveloped in `{data: ...}`, matching the `{data: ...}` shape already seen
+/// on other single-entity reads in this API) rather than assuming just one.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ClientSecretPayload {
+    Raw(String),
+    Object { secret: String },
+    Enveloped { data: Box<ClientSecretPayload> },
+}
+
+impl ClientSecretPayload {
+    fn into_secret(self) -> String {
+        match self {
+            ClientSecretPayload::Raw(secret) => secret,
+            ClientSecretPayload::Object { secret } => secret,
+            ClientSecretPayload::Enveloped { data } => data.into_secret(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_secret_payload_accepts_bare_string() {
+        let payload: ClientSecretPayload = serde_json::from_str("\"s3cr3t\"").unwrap();
+        assert_eq!(payload.into_secret(), "s3cr3t");
+    }
+
+    #[test]
+    fn client_secret_payload_accepts_object() {
+        let payload: ClientSecretPayload =
+            serde_json::from_str(r#"{"secret":"s3cr3t"}"#).unwrap();
+        assert_eq!(payload.into_secret(), "s3cr3t");
+    }
+
+    #[test]
+    fn client_secret_payload_accepts_enveloped_string() {
+        let payload: ClientSecretPayload =
+            serde_json::from_str(r#"{"data":"s3cr3t"}"#).unwrap();
+        assert_eq!(payload.into_secret(), "s3cr3t");
+    }
+
+    #[test]
+    fn client_secret_payload_accepts_enveloped_object() {
+        let payload: ClientSecretPayload =
+            serde_json::from_str(r#"{"data":{"secret":"s3cr3t"}}"#).unwrap();
+        assert_eq!(payload.into_secret(), "s3cr3t");
+    }
 }

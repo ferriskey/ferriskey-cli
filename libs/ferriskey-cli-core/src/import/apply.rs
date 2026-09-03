@@ -14,7 +14,9 @@ use ferriskey_cli_client::{
 };
 use reqwest::StatusCode;
 
-use super::{ClientBlueprint, ImportError, ImportReport, RealmBlueprint, RoleBlueprint};
+use super::{
+    ClientBlueprint, ClientSecretEntry, ImportError, ImportReport, RealmBlueprint, RoleBlueprint,
+};
 
 /// Apply `blueprint` to the FerrisKey instance behind `client`.
 ///
@@ -128,6 +130,19 @@ pub fn apply_blueprint(
             continue;
         };
         client_uuids.insert(client_bp.client_id.clone(), client_uuid.clone());
+
+        if client_bp.client_type == "confidential" {
+            match client.get_client_secret(realm, &client_uuid) {
+                Ok(secret) => report.client_secrets.push(ClientSecretEntry {
+                    client_id: client_bp.client_id.clone(),
+                    secret,
+                }),
+                Err(e) => report.warnings.push(format!(
+                    "could not read secret of client '{}': {e}",
+                    client_bp.client_id
+                )),
+            }
+        }
 
         for uri in &client_bp.redirect_uris {
             let request = CreateRedirectUriRequest {
