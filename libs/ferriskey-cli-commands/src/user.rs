@@ -20,9 +20,9 @@ pub enum UserSubcommand {
     Create(UserCreateArgs),
     /// Delete a user.
     Delete(UserDeleteArgs),
-    /// Assign a realm role to a user.
+    /// Assign a realm or client role to a user.
     AssignRole(UserAssignRoleArgs),
-    /// Remove a realm role from a user.
+    /// Remove a realm or client role from a user.
     RemoveRole(UserRemoveRoleArgs),
     /// List the realm roles assigned to a user.
     Roles(UserRolesArgs),
@@ -30,32 +30,40 @@ pub enum UserSubcommand {
     SetPassword(UserSetPasswordArgs),
 }
 
-/// Arguments for assigning a realm role to a user.
+/// Arguments for assigning a realm or client role to a user.
 #[derive(Debug, Args)]
 pub struct UserAssignRoleArgs {
     /// Username.
     pub username: String,
 
-    /// Realm role name to assign.
+    /// Role name to assign.
     pub role: String,
 
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+
+    /// Assign a role of this client instead of a realm role.
+    #[arg(long)]
+    pub client: Option<String>,
 }
 
-/// Arguments for removing a realm role from a user.
+/// Arguments for removing a realm or client role from a user.
 #[derive(Debug, Args)]
 pub struct UserRemoveRoleArgs {
     /// Username.
     pub username: String,
 
-    /// Realm role name to remove.
+    /// Role name to remove.
     pub role: String,
 
     /// Realm name. Defaults to the selected context realm.
     #[arg(long)]
     pub realm: Option<String>,
+
+    /// Remove a role of this client instead of a realm role.
+    #[arg(long)]
+    pub client: Option<String>,
 }
 
 /// Arguments for listing a user's realm roles.
