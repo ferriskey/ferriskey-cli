@@ -77,6 +77,8 @@ pub enum UserCommandError {
     UserNotFound(String),
     #[error("role '{0}' not found in realm")]
     RoleNotFound(String),
+    #[error("client '{0}' not found in realm")]
+    ClientNotFound(String),
     #[error("pass exactly one of '--password' or '--stdin'")]
     InvalidPasswordSource,
     #[error("failed to read password from stdin")]
@@ -246,9 +248,33 @@ fn delete_user(
     render_message(output_format, &format!("user '{}' deleted", args.username))
 }
 
-fn resolve_role(client: &FerriskeyClient, realm: &str, role_name: &str) -> Result<CreatedRole> {
+/// Resolve a client id (e.g. `my-app`) to the client's uuid, as required by
+/// the client-role endpoints.
+fn resolve_client_uuid(client: &FerriskeyClient, realm: &str, client_id: &str) -> Result<String> {
     client
-        .list_realm_roles(realm)?
+        .get_client(realm, client_id)?
+        .and_then(|found| found.id)
+        .ok_or_else(|| UserCommandError::ClientNotFound(client_id.to_owned()))
+}
+
+/// Resolve a role by name in the scope selected by `--client`: a specific
+/// client's roles when given, realm roles otherwise. Role ids are unique
+/// across both scopes, so the same `assign_user_role`/`remove_user_role`
+/// calls work regardless of which scope resolved the id.
+fn resolve_role(
+    client: &FerriskeyClient,
+    realm: &str,
+    role_name: &str,
+    client_id: Option<&str>,
+) -> Result<CreatedRole> {
+    let roles = match client_id {
+        Some(client_id) => {
+            let uuid = resolve_client_uuid(client, realm, client_id)?;
+            client.list_client_roles(realm, &uuid)?
+        }
+        None => client.list_realm_roles(realm)?,
+    };
+    roles
         .into_iter()
         .find(|r| r.name == role_name)
         .ok_or_else(|| UserCommandError::RoleNotFound(role_name.to_owned()))
@@ -264,7 +290,7 @@ fn assign_role(
     let realm = resolve_realm(&context, args.realm)?;
     let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
-    let role = resolve_role(&client, &realm, &args.role)?;
+    let role = resolve_role(&client, &realm, &args.role, args.client.as_deref())?;
     client.assign_user_role(&realm, &user.id, &role.id)?;
     render_message(
         output_format,
@@ -285,7 +311,7 @@ fn remove_role(
     let realm = resolve_realm(&context, args.realm)?;
     let client = auth_client(&context)?;
     let user = find_user(&client, &realm, &args.username)?;
-    let role = resolve_role(&client, &realm, &args.role)?;
+    let role = resolve_role(&client, &realm, &args.role, args.client.as_deref())?;
     client.remove_user_role(&realm, &user.id, &role.id)?;
     render_message(
         output_format,
