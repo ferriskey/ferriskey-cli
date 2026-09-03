@@ -118,11 +118,16 @@ pub fn apply_blueprint(
         }
     }
 
-    // 4. Clients, with their redirect URIs and client-scoped roles.
+    // 4. Clients, with their redirect URIs and client-scoped roles. Track
+    // client_id -> uuid and (client_id, role name) -> role id so client roles
+    // can be assigned to users afterward, same as realm roles above.
+    let mut client_uuids: HashMap<String, String> = HashMap::new();
+    let mut client_role_ids: HashMap<(String, String), String> = HashMap::new();
     for client_bp in &blueprint.clients {
         let Some(client_uuid) = resolve_client(client, realm, client_bp, &mut report)? else {
             continue;
         };
+        client_uuids.insert(client_bp.client_id.clone(), client_uuid.clone());
 
         for uri in &client_bp.redirect_uris {
             let request = CreateRedirectUriRequest {
@@ -185,7 +190,11 @@ pub fn apply_blueprint(
 
         for role in &client_bp.roles {
             match client.create_client_role(realm, &client_uuid, &role_request(role)) {
-                Ok(_) => report.client_roles_created += 1,
+                Ok(created) => {
+                    client_role_ids
+                        .insert((client_bp.client_id.clone(), created.name), created.id);
+                    report.client_roles_created += 1;
+                }
                 Err(e) if is_conflict(&e) => {
                     report.already_present += 1;
                     report.warnings.push(format!(
@@ -194,6 +203,32 @@ pub fn apply_blueprint(
                     ));
                 }
                 Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    // Backfill ids for client roles referenced by users but skipped above
+    // (already existing) — same rationale as the realm-role backfill.
+    let missing_client_role_ref = blueprint.users.iter().flat_map(|u| &u.roles).any(|spec| {
+        matches!(
+            parse_role_ref(spec),
+            RoleRef::Client { client_id, role }
+                if !client_role_ids.contains_key(&(client_id.to_owned(), role.to_owned()))
+        )
+    });
+    if missing_client_role_ref {
+        for (client_id, uuid) in &client_uuids {
+            match client.list_client_roles(realm, uuid) {
+                Ok(existing) => {
+                    for role in existing {
+                        client_role_ids
+                            .entry((client_id.clone(), role.name))
+                            .or_insert(role.id);
+                    }
+                }
+                Err(e) => report.warnings.push(format!(
+                    "could not list roles of client '{client_id}' for assignment: {e}"
+                )),
             }
         }
     }
@@ -216,23 +251,43 @@ pub fn apply_blueprint(
         };
 
         let Some(user_id) = user_id else { continue };
-        for role_name in &user.roles {
-            match role_ids.get(role_name) {
-                Some(role_id) => match client.assign_user_role(realm, &user_id, role_id) {
-                    Ok(()) => report.role_assignments += 1,
-                    Err(e) if is_conflict(&e) => {
-                        report.already_present += 1;
+        for role_spec in &user.roles {
+            let role_id = match parse_role_ref(role_spec) {
+                RoleRef::Realm(name) => match role_ids.get(name) {
+                    Some(role_id) => Some(role_id),
+                    None => {
                         report.warnings.push(format!(
-                            "user '{}' already has role '{role_name}'",
+                            "role '{name}' not found, cannot assign it to user '{}'",
                             user.username
                         ));
+                        None
                     }
-                    Err(e) => return Err(e.into()),
                 },
-                None => report.warnings.push(format!(
-                    "role '{role_name}' not found, cannot assign it to user '{}'",
-                    user.username
-                )),
+                RoleRef::Client { client_id, role } => {
+                    match client_role_ids.get(&(client_id.to_owned(), role.to_owned())) {
+                        Some(role_id) => Some(role_id),
+                        None => {
+                            return Err(ImportError::UnresolvedClientRole {
+                                client_id: client_id.to_owned(),
+                                role: role.to_owned(),
+                                username: user.username.clone(),
+                            });
+                        }
+                    }
+                }
+            };
+
+            let Some(role_id) = role_id else { continue };
+            match client.assign_user_role(realm, &user_id, role_id) {
+                Ok(()) => report.role_assignments += 1,
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "user '{}' already has role '{role_spec}'",
+                        user.username
+                    ));
+                }
+                Err(e) => return Err(e.into()),
             }
         }
     }
@@ -296,6 +351,21 @@ fn resolve_existing_user(
                 .push(format!("could not resolve existing user '{username}': {e}"));
             None
         }
+    }
+}
+
+/// A `UserBlueprint.roles` entry: a plain name for a realm role, or
+/// `client_id:role_name` for a role scoped to that client.
+#[derive(Debug, PartialEq, Eq)]
+enum RoleRef<'a> {
+    Realm(&'a str),
+    Client { client_id: &'a str, role: &'a str },
+}
+
+fn parse_role_ref(spec: &str) -> RoleRef<'_> {
+    match spec.split_once(':') {
+        Some((client_id, role)) => RoleRef::Client { client_id, role },
+        None => RoleRef::Realm(spec),
     }
 }
 
@@ -482,5 +552,21 @@ mod tests {
     #[test]
     fn is_conflict_rejects_unrelated_400() {
         assert!(!is_conflict(&api_error(StatusCode::BAD_REQUEST, "invalid input")));
+    }
+
+    #[test]
+    fn parse_role_ref_plain_name_is_realm_role() {
+        assert_eq!(parse_role_ref("admin"), RoleRef::Realm("admin"));
+    }
+
+    #[test]
+    fn parse_role_ref_qualified_name_is_client_role() {
+        assert_eq!(
+            parse_role_ref("myapp:viewer"),
+            RoleRef::Client {
+                client_id: "myapp",
+                role: "viewer"
+            }
+        );
     }
 }
