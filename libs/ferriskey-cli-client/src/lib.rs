@@ -987,23 +987,29 @@ struct DataEnvelope<T> {
     data: T,
 }
 
-/// Shape of the client-secret endpoint's response isn't documented; this
-/// accepts the plausible variants (bare string, `{secret}`, and either
-/// enveloped in `{data: ...}`, matching the `{data: ...}` shape already seen
-/// on other single-entity reads in this API) rather than assuming just one.
+
+/// Shape of the client-secret endpoint's response, confirmed live:
+/// `{"client_secret": "..."}`. The other variants are kept as a fallback for
+/// robustness (bare string, `{secret}`, enveloped in `{data: ...}` like other
+/// single-entity reads in this API) rather than assuming only one shape.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum ClientSecretPayload {
     Raw(String),
-    Object { secret: String },
-    Enveloped { data: Box<ClientSecretPayload> },
+    Object {
+        #[serde(alias = "secret")]
+        client_secret: String,
+    },
+    Enveloped {
+        data: Box<ClientSecretPayload>,
+    },
 }
 
 impl ClientSecretPayload {
     fn into_secret(self) -> String {
         match self {
             ClientSecretPayload::Raw(secret) => secret,
-            ClientSecretPayload::Object { secret } => secret,
+            ClientSecretPayload::Object { client_secret } => client_secret,
             ClientSecretPayload::Enveloped { data } => data.into_secret(),
         }
     }
@@ -1020,7 +1026,15 @@ mod tests {
     }
 
     #[test]
-    fn client_secret_payload_accepts_object() {
+    fn client_secret_payload_accepts_real_shape() {
+        // Confirmed live against a running FerrisKey server.
+        let payload: ClientSecretPayload =
+            serde_json::from_str(r#"{"client_secret":"s3cr3t"}"#).unwrap();
+        assert_eq!(payload.into_secret(), "s3cr3t");
+    }
+
+    #[test]
+    fn client_secret_payload_accepts_secret_alias() {
         let payload: ClientSecretPayload =
             serde_json::from_str(r#"{"secret":"s3cr3t"}"#).unwrap();
         assert_eq!(payload.into_secret(), "s3cr3t");
@@ -1036,7 +1050,7 @@ mod tests {
     #[test]
     fn client_secret_payload_accepts_enveloped_object() {
         let payload: ClientSecretPayload =
-            serde_json::from_str(r#"{"data":{"secret":"s3cr3t"}}"#).unwrap();
+            serde_json::from_str(r#"{"data":{"client_secret":"s3cr3t"}}"#).unwrap();
         assert_eq!(payload.into_secret(), "s3cr3t");
     }
 }
