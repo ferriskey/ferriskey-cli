@@ -156,7 +156,8 @@ pub struct UserBlueprint {
     pub lastname: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_verified: Option<bool>,
-    /// Realm role names to assign to this user.
+    /// Roles to assign to this user: a plain name for a realm role, or
+    /// `client_id:role_name` for a role scoped to that client.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
 }
@@ -209,6 +210,15 @@ pub enum ImportError {
     Config(#[from] crate::config::ConfigError),
     #[error("unknown source '{0}' (see `ferris-ctl source list`)")]
     UnknownSourceRef(String),
+    #[error(
+        "client role '{client_id}:{role}' referenced by user '{username}' was not found — \
+         define it under that client's `roles` in the blueprint"
+    )]
+    UnresolvedClientRole {
+        client_id: String,
+        role: String,
+        username: String,
+    },
     #[error("provide either --from <kind> or --source-ref <name>")]
     NoSourceSpecified,
     #[error(
