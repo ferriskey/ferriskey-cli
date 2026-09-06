@@ -237,6 +237,16 @@ pub struct CreateWebOriginRequest {
     pub value: String,
 }
 
+/// One entry of a client's redirect-URI, post-logout-redirect or web-origin
+/// list. Only the value is of interest to callers matching against a
+/// blueprint; the id is kept for callers that need to address the entry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientUriEntry {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub value: String,
+}
+
 /// Partial update of a client's PKCE requirement and token lifetimes. Only the
 /// fields that are `Some` are sent. Applied via `PATCH`, unlike the rest of the
 /// client's settings which are only settable at creation time.
@@ -597,6 +607,37 @@ impl FerriskeyClient {
         // Unlike `create_role`, this endpoint returns the created role as a
         // bare object, not wrapped in a `{"data": ...}` envelope.
         Ok(response.json::<CreatedRole>()?)
+    }
+
+    /// A client's redirect URIs. The create endpoint accepts a duplicate value
+    /// with a `201` and stores a second row, so callers that need idempotence
+    /// have to read the list and match on `value` themselves.
+    pub fn list_client_redirects(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+    ) -> Result<Vec<ClientUriEntry>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!("realms/{realm}/clients/{client_uuid}/redirects")))
+    }
+
+    pub fn list_client_post_logout_redirects(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+    ) -> Result<Vec<ClientUriEntry>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!(
+            "realms/{realm}/clients/{client_uuid}/post-logout-redirects"
+        )))
+    }
+
+    pub fn list_client_web_origins(
+        &self,
+        realm: &str,
+        client_uuid: &str,
+    ) -> Result<Vec<ClientUriEntry>, FerriskeyClientError> {
+        self.get_list(&self.endpoint(&format!(
+            "realms/{realm}/clients/{client_uuid}/web-origins"
+        )))
     }
 
     pub fn add_client_redirect(
