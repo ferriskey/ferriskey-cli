@@ -3,14 +3,23 @@
 //! The API exposes no bulk import, so entities are created one by one in
 //! dependency order: realm, then settings, realm roles, clients (with their
 //! redirect URIs and client roles), and finally users with their role
-//! assignments. An entity that already exists is treated as a skip with a
-//! warning rather than a hard error, so an import can be re-run to converge.
+//! assignments. An import can be re-run to converge: what the realm already
+//! has is read first and skipped, counted in [`ImportReport::already_present`]
+//! with a warning naming it.
+//!
+//! Convergence is built on those reads rather than on classifying the create
+//! error, because the server's answer to a duplicate is not uniform: a realm
+//! gets a clean `409`, a duplicate user or web origin a `400` naming the
+//! clash, a role or a client a bare `500` carrying nothing to distinguish it
+//! from a genuine failure, and a duplicate redirect URI a `201` that quietly
+//! stores a second row. [`is_conflict`] stays as the fallback for the
+//! recognizable cases and for the race between the read and the create.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ferriskey_cli_client::{
-    CreateClientRequest, CreateRedirectUriRequest, CreateRoleRequest, CreateUserRequest,
-    CreateWebOriginRequest, FerriskeyClient, FerriskeyClientError,
+    ClientUriEntry, CreateClientRequest, CreateRedirectUriRequest, CreateRoleRequest,
+    CreateUserRequest, CreateWebOriginRequest, FerriskeyClient, FerriskeyClientError,
 };
 use reqwest::StatusCode;
 
@@ -61,17 +70,29 @@ pub fn apply_blueprint(
 
     let realm = blueprint.name.as_str();
 
-    // 1. Realm.
-    match client.create_realm(&ferriskey_cli_client::CreateRealmRequest { name: realm.to_owned() })
-    {
-        Ok(_) => report.realm_created = true,
-        Err(e) if is_conflict(&e) => {
-            report.already_present += 1;
-            report
-                .warnings
-                .push(format!("realm '{realm}' already exists, reusing it"));
+    // 1. Realm. Existence is checked before creating rather than deduced from
+    // the create error: what a duplicate looks like varies per entity and per
+    // server version (a clean 409 here, an opaque 500 there, a silent second
+    // row elsewhere), and a replay has to converge regardless. `is_conflict`
+    // stays as a fallback for the race between the check and the create.
+    if client.get_realm(realm).is_ok() {
+        report.already_present += 1;
+        report
+            .warnings
+            .push(format!("realm '{realm}' already exists, reusing it"));
+    } else {
+        match client.create_realm(&ferriskey_cli_client::CreateRealmRequest {
+            name: realm.to_owned(),
+        }) {
+            Ok(_) => report.realm_created = true,
+            Err(e) if is_conflict(&e) => {
+                report.already_present += 1;
+                report
+                    .warnings
+                    .push(format!("realm '{realm}' already exists, reusing it"));
+            }
+            Err(e) => return Err(e.into()),
         }
-        Err(e) => return Err(e.into()),
     }
 
     // 2. Settings.
@@ -83,9 +104,39 @@ pub fn apply_blueprint(
         }
     }
 
-    // 3. Realm roles. Track name -> id so we can assign them to users later.
+    // 3. Realm roles. Track name -> id so we can assign them to users later,
+    // seeded with the roles the realm already has so a replay skips them
+    // instead of re-posting a name the server rejects with a bare 500.
     let mut role_ids: HashMap<String, String> = HashMap::new();
+    let needs_realm_roles = !blueprint.roles.is_empty()
+        || blueprint
+            .users
+            .iter()
+            .flat_map(|u| &u.roles)
+            .any(|spec| matches!(parse_role_ref(spec), RoleRef::Realm(_)));
+    let mut realm_roles_listed = false;
+    if needs_realm_roles {
+        match client.list_realm_roles(realm) {
+            Ok(existing) => {
+                realm_roles_listed = true;
+                for role in existing {
+                    role_ids.insert(role.name, role.id);
+                }
+            }
+            Err(e) => report
+                .warnings
+                .push(format!("could not list realm roles: {e}")),
+        }
+    }
+
     for role in &blueprint.roles {
+        if role_ids.contains_key(&role.name) {
+            report.already_present += 1;
+            report
+                .warnings
+                .push(format!("realm role '{}' already exists", role.name));
+            continue;
+        }
         match client.create_role(realm, &role_request(role)) {
             Ok(created) => {
                 role_ids.insert(created.name, created.id);
@@ -101,13 +152,14 @@ pub fn apply_blueprint(
         }
     }
 
-    // Backfill ids for roles referenced by users but skipped above (already existing).
+    // Backfill ids for roles referenced by users but neither created nor listed
+    // above — only reachable when the listing itself failed.
     let missing_role_ref = blueprint
         .users
         .iter()
         .flat_map(|u| &u.roles)
         .any(|name| !role_ids.contains_key(name));
-    if missing_role_ref {
+    if !realm_roles_listed && missing_role_ref {
         match client.list_realm_roles(realm) {
             Ok(existing) => {
                 for role in existing {
@@ -125,8 +177,31 @@ pub fn apply_blueprint(
     // can be assigned to users afterward, same as realm roles above.
     let mut client_uuids: HashMap<String, String> = HashMap::new();
     let mut client_role_ids: HashMap<(String, String), String> = HashMap::new();
+
+    let mut existing_clients: HashMap<String, String> = HashMap::new();
+    if !blueprint.clients.is_empty() {
+        match client.list_clients(realm) {
+            Ok(existing) => {
+                for existing_client in existing {
+                    if let (Some(client_id), Some(id)) =
+                        (existing_client.client_id, existing_client.id)
+                    {
+                        existing_clients.insert(client_id, id);
+                    }
+                }
+            }
+            Err(e) => report.warnings.push(format!("could not list clients: {e}")),
+        }
+    }
+
+    // Clients whose roles were listed here, so the backfill below can skip them.
+    let mut client_roles_listed: HashSet<String> = HashSet::new();
+
     for client_bp in &blueprint.clients {
-        let Some(client_uuid) = resolve_client(client, realm, client_bp, &mut report)? else {
+        let existing_uuid = existing_clients.get(&client_bp.client_id).cloned();
+        let Some(client_uuid) =
+            resolve_client(client, realm, client_bp, existing_uuid, &mut report)?
+        else {
             continue;
         };
         client_uuids.insert(client_bp.client_id.clone(), client_uuid.clone());
@@ -144,7 +219,28 @@ pub fn apply_blueprint(
             }
         }
 
+        // Redirects, post-logout redirects and web origins are matched on their
+        // value: the redirect endpoint happily stores a duplicate, so a replay
+        // would otherwise grow the list on every run.
+        let existing_redirects = if client_bp.redirect_uris.is_empty() {
+            HashSet::new()
+        } else {
+            existing_values(
+                client.list_client_redirects(realm, &client_uuid),
+                "redirect uris",
+                &client_bp.client_id,
+                &mut report,
+            )
+        };
         for uri in &client_bp.redirect_uris {
+            if existing_redirects.contains(uri) {
+                report.already_present += 1;
+                report.warnings.push(format!(
+                    "redirect '{uri}' already exists on client '{}'",
+                    client_bp.client_id
+                ));
+                continue;
+            }
             let request = CreateRedirectUriRequest {
                 value: uri.clone(),
                 enabled: true,
@@ -162,7 +258,25 @@ pub fn apply_blueprint(
             }
         }
 
+        let existing_post_logout = if client_bp.post_logout_redirect_uris.is_empty() {
+            HashSet::new()
+        } else {
+            existing_values(
+                client.list_client_post_logout_redirects(realm, &client_uuid),
+                "post-logout redirects",
+                &client_bp.client_id,
+                &mut report,
+            )
+        };
         for uri in &client_bp.post_logout_redirect_uris {
+            if existing_post_logout.contains(uri) {
+                report.already_present += 1;
+                report.warnings.push(format!(
+                    "post-logout redirect '{uri}' already exists on client '{}'",
+                    client_bp.client_id
+                ));
+                continue;
+            }
             let request = CreateRedirectUriRequest {
                 value: uri.clone(),
                 enabled: true,
@@ -180,7 +294,25 @@ pub fn apply_blueprint(
             }
         }
 
+        let existing_origins = if client_bp.web_origins.is_empty() {
+            HashSet::new()
+        } else {
+            existing_values(
+                client.list_client_web_origins(realm, &client_uuid),
+                "web origins",
+                &client_bp.client_id,
+                &mut report,
+            )
+        };
         for origin in &client_bp.web_origins {
+            if existing_origins.contains(origin) {
+                report.already_present += 1;
+                report.warnings.push(format!(
+                    "web origin '{origin}' already exists on client '{}'",
+                    client_bp.client_id
+                ));
+                continue;
+            }
             let request = CreateWebOriginRequest {
                 value: origin.clone(),
             };
@@ -203,11 +335,36 @@ pub fn apply_blueprint(
             report.client_settings_applied += 1;
         }
 
+        if !client_bp.roles.is_empty() {
+            match client.list_client_roles(realm, &client_uuid) {
+                Ok(existing) => {
+                    client_roles_listed.insert(client_bp.client_id.clone());
+                    for role in existing {
+                        client_role_ids
+                            .entry((client_bp.client_id.clone(), role.name))
+                            .or_insert(role.id);
+                    }
+                }
+                Err(e) => report.warnings.push(format!(
+                    "could not list roles of client '{}': {e}",
+                    client_bp.client_id
+                )),
+            }
+        }
+
         for role in &client_bp.roles {
+            let key = (client_bp.client_id.clone(), role.name.clone());
+            if client_role_ids.contains_key(&key) {
+                report.already_present += 1;
+                report.warnings.push(format!(
+                    "client role '{}' already exists on client '{}'",
+                    role.name, client_bp.client_id
+                ));
+                continue;
+            }
             match client.create_client_role(realm, &client_uuid, &role_request(role)) {
                 Ok(created) => {
-                    client_role_ids
-                        .insert((client_bp.client_id.clone(), created.name), created.id);
+                    client_role_ids.insert((client_bp.client_id.clone(), created.name), created.id);
                     report.client_roles_created += 1;
                 }
                 Err(e) if is_conflict(&e) => {
@@ -222,8 +379,8 @@ pub fn apply_blueprint(
         }
     }
 
-    // Backfill ids for client roles referenced by users but skipped above
-    // (already existing) — same rationale as the realm-role backfill.
+    // Backfill ids for client roles referenced by users but neither created nor
+    // listed above — same rationale as the realm-role backfill.
     let missing_client_role_ref = blueprint.users.iter().flat_map(|u| &u.roles).any(|spec| {
         matches!(
             parse_role_ref(spec),
@@ -233,6 +390,9 @@ pub fn apply_blueprint(
     });
     if missing_client_role_ref {
         for (client_id, uuid) in &client_uuids {
+            if client_roles_listed.contains(client_id) {
+                continue;
+            }
             match client.list_client_roles(realm, uuid) {
                 Ok(existing) => {
                     for role in existing {
@@ -250,22 +410,62 @@ pub fn apply_blueprint(
 
     // 5. Users, with realm-role assignments.
     for user in &blueprint.users {
-        let user_id = match client.create_user(realm, &user_request(user)) {
-            Ok(created) => {
-                report.users_created += 1;
-                Some(created.id)
+        let existing_user = match find_existing_user(client, realm, &user.username) {
+            Ok(found) => found,
+            Err(e) => {
+                report
+                    .warnings
+                    .push(format!("could not look up user '{}': {e}", user.username));
+                None
             }
-            Err(e) if is_conflict(&e) => {
+        };
+
+        let (user_id, user_existed) = match existing_user {
+            Some(id) => {
                 report.already_present += 1;
                 report
                     .warnings
                     .push(format!("user '{}' already exists, reusing it", user.username));
-                resolve_existing_user(client, realm, &user.username, &mut report)
+                (Some(id), true)
             }
-            Err(e) => return Err(e.into()),
+            None => match client.create_user(realm, &user_request(user)) {
+                Ok(created) => {
+                    report.users_created += 1;
+                    (Some(created.id), false)
+                }
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report
+                        .warnings
+                        .push(format!("user '{}' already exists, reusing it", user.username));
+                    (
+                        resolve_existing_user(client, realm, &user.username, &mut report),
+                        true,
+                    )
+                }
+                Err(e) => return Err(e.into()),
+            },
         };
 
         let Some(user_id) = user_id else { continue };
+
+        // A second assignment of a role the user already holds is a duplicate
+        // write server-side, so an existing user's roles are read first.
+        let assigned_roles: HashSet<String> = if user_existed && !user.roles.is_empty() {
+            match client.list_user_roles(realm, &user_id) {
+                Ok(roles) => roles.into_iter().map(|role| role.id).collect(),
+                Err(e) => {
+                    report.warnings.push(format!(
+                        "could not list roles of user '{}': {e}",
+                        user.username
+                    ));
+                    HashSet::new()
+                }
+            }
+        } else {
+            HashSet::new()
+        };
+
         for role_spec in &user.roles {
             let role_id = match parse_role_ref(role_spec) {
                 RoleRef::Realm(name) => match role_ids.get(name) {
@@ -293,6 +493,14 @@ pub fn apply_blueprint(
             };
 
             let Some(role_id) = role_id else { continue };
+            if assigned_roles.contains(role_id) {
+                report.already_present += 1;
+                report.warnings.push(format!(
+                    "user '{}' already has role '{role_spec}'",
+                    user.username
+                ));
+                continue;
+            }
             match client.assign_user_role(realm, &user_id, role_id) {
                 Ok(()) => report.role_assignments += 1,
                 Err(e) if is_conflict(&e) => {
@@ -310,14 +518,25 @@ pub fn apply_blueprint(
     Ok(report)
 }
 
-/// Creates a client, returning its UUID. On conflict, resolves the existing
-/// client's UUID so its redirects/roles can still be applied.
+/// Resolves a client to its UUID, creating it when the realm doesn't have it
+/// yet. `existing_uuid` is the UUID found in the realm's client list, if any;
+/// when it is set nothing is created, since this server reports a duplicate
+/// client as an opaque 500 that `is_conflict` cannot tell from a real failure.
 fn resolve_client(
     client: &FerriskeyClient,
     realm: &str,
     client_bp: &ClientBlueprint,
+    existing_uuid: Option<String>,
     report: &mut ImportReport,
 ) -> Result<Option<String>, ImportError> {
+    if let Some(uuid) = existing_uuid {
+        report.already_present += 1;
+        report
+            .warnings
+            .push(format!("client '{}' already exists, reusing it", client_bp.client_id));
+        return Ok(Some(uuid));
+    }
+
     match client.create_client(realm, &client_request(client_bp)) {
         Ok(created) => {
             report.clients_created += 1;
@@ -352,14 +571,49 @@ fn resolve_client(
     }
 }
 
+/// The id of `username` in `realm`, or `None` when the realm has no such user.
+/// The server ignores the `username` query filter on some versions, so the
+/// match is confirmed client-side.
+fn find_existing_user(
+    client: &FerriskeyClient,
+    realm: &str,
+    username: &str,
+) -> Result<Option<String>, FerriskeyClientError> {
+    Ok(client
+        .find_users_by_username(realm, username)?
+        .into_iter()
+        .find(|u| u.username == username)
+        .map(|u| u.id))
+}
+
+/// The values already registered on a client, as a set to match a blueprint
+/// against. A failed read degrades to an empty set: the create below then runs
+/// and its own error handling decides, rather than the whole import aborting.
+fn existing_values(
+    result: Result<Vec<ClientUriEntry>, FerriskeyClientError>,
+    what: &str,
+    client_id: &str,
+    report: &mut ImportReport,
+) -> HashSet<String> {
+    match result {
+        Ok(entries) => entries.into_iter().map(|entry| entry.value).collect(),
+        Err(e) => {
+            report
+                .warnings
+                .push(format!("could not list {what} of client '{client_id}': {e}"));
+            HashSet::new()
+        }
+    }
+}
+
 fn resolve_existing_user(
     client: &FerriskeyClient,
     realm: &str,
     username: &str,
     report: &mut ImportReport,
 ) -> Option<String> {
-    match client.find_users_by_username(realm, username) {
-        Ok(users) => users.into_iter().find(|u| u.username == username).map(|u| u.id),
+    match find_existing_user(client, realm, username) {
+        Ok(found) => found,
         Err(e) => {
             report
                 .warnings
@@ -567,6 +821,47 @@ mod tests {
     #[test]
     fn is_conflict_rejects_unrelated_400() {
         assert!(!is_conflict(&api_error(StatusCode::BAD_REQUEST, "invalid input")));
+    }
+
+    #[test]
+    fn existing_values_collects_registered_uris() {
+        let mut report = ImportReport::default();
+        let values = existing_values(
+            Ok(vec![
+                ClientUriEntry {
+                    id: Some("1".to_owned()),
+                    value: "https://a/callback".to_owned(),
+                },
+                ClientUriEntry {
+                    id: None,
+                    value: "https://b/callback".to_owned(),
+                },
+            ]),
+            "redirect uris",
+            "web",
+            &mut report,
+        );
+
+        assert!(values.contains("https://a/callback"));
+        assert!(values.contains("https://b/callback"));
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn existing_values_warns_and_degrades_to_empty_on_read_failure() {
+        let mut report = ImportReport::default();
+        let values = existing_values(
+            Err(api_error(StatusCode::FORBIDDEN, "nope")),
+            "web origins",
+            "web",
+            &mut report,
+        );
+
+        // Empty, so the create below still runs and decides for itself rather
+        // than the whole import aborting on a failed read.
+        assert!(values.is_empty());
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("could not list web origins of client 'web'"));
     }
 
     #[test]
