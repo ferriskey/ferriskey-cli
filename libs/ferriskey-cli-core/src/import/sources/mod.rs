@@ -68,9 +68,6 @@ fn build_from_inline(
     }
 }
 
-/// Supabase's account filters are per-run choices about which rows to replay,
-/// so they come from the flags only and are never read back from a stored
-/// source — a saved source must not silently widen a later import.
 fn user_filters(args: &RealmImportArgs) -> UserFilters {
     UserFilters {
         include_deleted: args.source_include_deleted,

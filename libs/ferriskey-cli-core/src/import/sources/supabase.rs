@@ -1,42 +1,24 @@
-//! Reads a Supabase project through its Auth (GoTrue) Admin API and maps the
-//! users onto a [`RealmBlueprint`].
-//!
-//! Supabase has no realm, no OIDC client and no role catalogue of its own, so
-//! an import carries users and nothing else. The realm name comes from
-//! `--target-realm` (or `--source-realm`) and defaults to `supabase`.
-//!
-//! Passwords are never carried over. Supabase keeps bcrypt hashes in
-//! `auth.users.encrypted_password` and does not serve them over the Admin API,
-//! and the FerrisKey API accepts only a plaintext password on its
-//! `reset-password` endpoint — neither side exposes a hash. Imported users
-//! therefore arrive without credentials and have to go through a reset.
-//!
-//! Authentication uses the project's `service_role` key, passed with
-//! `--source-token`; it is sent both as the `apikey` header Supabase's gateway
-//! expects and as the bearer token GoTrue itself checks.
-
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-use crate::import::{ImportError, RealmBlueprint, RealmSource, UserBlueprint};
+use crate::import::{ImportError, RealmBlueprint, RealmSource, RoleBlueprint, UserBlueprint};
 
 const SOURCE: &str = "supabase";
 const USER_PAGE_SIZE: usize = 100;
 const DEFAULT_REALM_NAME: &str = "supabase";
 
+const CLIENT_SCOPE_SEPARATOR: char = ':';
+
+const ROLE_LIST_KEY: &str = "roles";
+const ROLE_SINGLE_KEY: &str = "role";
+
 const FIRST_NAME_KEYS: [&str; 3] = ["first_name", "firstName", "given_name"];
 const LAST_NAME_KEYS: [&str; 3] = ["last_name", "lastName", "family_name"];
 const FULL_NAME_KEYS: [&str; 2] = ["full_name", "name"];
 
-/// Which Supabase accounts an import carries over.
-///
-/// The user table holds rows a migration usually should not replay: accounts an
-/// operator soft-deleted, anonymous sign-in sessions, and addresses nobody ever
-/// confirmed. Each is dropped by default; `Default` is therefore the strictest
-/// setting, and every flag only ever widens what is kept.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UserFilters {
     pub include_deleted: bool,
@@ -45,13 +27,6 @@ pub struct UserFilters {
 }
 
 impl UserFilters {
-    /// Whether `user` survives the filters.
-    ///
-    /// The confirmation filter only judges accounts that have something to
-    /// confirm. An anonymous account has neither address nor phone, so it is
-    /// governed by `include_anonymous` alone — were it also subject to the
-    /// confirmation filter, asking to keep anonymous users would still drop
-    /// every one of them.
     fn keeps(&self, user: &SupabaseUser) -> bool {
         if user.deleted_at.is_some() && !self.include_deleted {
             return false;
@@ -72,8 +47,6 @@ pub struct SupabaseSource {
 }
 
 impl SupabaseSource {
-    /// Builds the source from resolved option values (inline flags already
-    /// merged over any stored source).
     pub fn build(
         base_url: Option<String>,
         service_role_key: Option<String>,
@@ -93,7 +66,6 @@ impl SupabaseSource {
         })
     }
 
-    /// Reads one page of the admin user list. Pages are 1-indexed.
     fn page(&self, page: usize) -> Result<Vec<SupabaseUser>, ImportError> {
         let url = format!(
             "{}/auth/v1/admin/users?page={page}&per_page={USER_PAGE_SIZE}",
@@ -119,15 +91,6 @@ impl SupabaseSource {
         Ok(response.json::<UserList>()?.users)
     }
 
-    /// Walks every page of the admin user list, keeping what the filters allow.
-    ///
-    /// Termination is on "this page brought no id we had not already seen", not
-    /// on the usual "this page was shorter than the size we asked for". GoTrue
-    /// caps `per_page` server-side, so a short page is the ordinary case rather
-    /// than the last one, and the short-page test would stop after the first
-    /// batch and silently drop the rest of the directory. Tracking ids also
-    /// bounds the walk against a deployment that ignores `page` and keeps
-    /// serving the first one.
     fn all_users(&self) -> Result<Vec<UserBlueprint>, ImportError> {
         let mut seen: HashSet<String> = HashSet::new();
         let mut users = Vec::new();
@@ -135,16 +98,18 @@ impl SupabaseSource {
 
         loop {
             let batch = self.page(page)?;
-            let known = seen.len();
+            let seen_before = seen.len();
             for user in batch {
                 if !seen.insert(user.id.clone()) {
                     continue;
                 }
                 if self.filters.keeps(&user) {
-                    users.push(map_user(user));
+                    users.push(map_user(user)?);
                 }
             }
-            if seen.len() == known {
+
+            let page_brought_nothing_new = seen.len() == seen_before;
+            if page_brought_nothing_new {
                 return Ok(users);
             }
             page += 1;
@@ -158,20 +123,18 @@ impl RealmSource for SupabaseSource {
             .realm_name
             .clone()
             .unwrap_or_else(|| DEFAULT_REALM_NAME.to_owned());
+        let users = self.all_users()?;
 
         Ok(vec![RealmBlueprint {
             name,
             settings: None,
-            roles: Vec::new(),
+            roles: role_catalogue(&users),
             clients: Vec::new(),
-            users: self.all_users()?,
+            users,
         }])
     }
 }
 
-/// Accepts both the project URL and one already pointing at the Auth API, so
-/// `https://abc.supabase.co` and `https://abc.supabase.co/auth/v1` both reach
-/// the same endpoint instead of one of them 404ing on a doubled path.
 fn normalize_base_url(url: &str) -> String {
     url.trim_end_matches('/')
         .trim_end_matches("/auth/v1")
@@ -179,7 +142,7 @@ fn normalize_base_url(url: &str) -> String {
         .to_owned()
 }
 
-fn map_user(user: SupabaseUser) -> UserBlueprint {
+fn map_user(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
     let (firstname, lastname) = names_from_metadata(&user.user_metadata);
     let email_verified = user
         .email
@@ -189,24 +152,65 @@ fn map_user(user: SupabaseUser) -> UserBlueprint {
         .email
         .clone()
         .or_else(|| user.phone.clone())
-        .unwrap_or(user.id);
+        .unwrap_or_else(|| user.id.clone());
+    let roles = roles_from_metadata(&user.app_metadata, &username)?;
 
-    UserBlueprint {
+    Ok(UserBlueprint {
         username,
         email: user.email,
         firstname,
         lastname,
         email_verified,
-        roles: Vec::new(),
-    }
+        roles,
+    })
 }
 
-/// Pulls a first and last name out of Supabase's free-form `user_metadata`.
-///
-/// There is no profile schema behind that field: an email signup stores
-/// whatever the application wrote into it, while an OAuth provider stores the
-/// OIDC claims it received. The explicit keys are tried first, then a single
-/// display name is split on its first run of whitespace.
+fn role_catalogue(users: &[UserBlueprint]) -> Vec<RoleBlueprint> {
+    users
+        .iter()
+        .flat_map(|user| &user.roles)
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|name| RoleBlueprint {
+            name: name.to_owned(),
+            description: None,
+            permissions: Vec::new(),
+        })
+        .collect()
+}
+
+fn roles_from_metadata(
+    metadata: &Map<String, Value>,
+    username: &str,
+) -> Result<Vec<String>, ImportError> {
+    let listed = metadata
+        .get(ROLE_LIST_KEY)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str);
+    let single = metadata.get(ROLE_SINGLE_KEY).and_then(Value::as_str);
+
+    let mut roles: Vec<String> = Vec::new();
+    for name in listed.chain(single) {
+        let name = name.trim();
+        if name.is_empty() || roles.iter().any(|kept| kept == name) {
+            continue;
+        }
+        if name.contains(CLIENT_SCOPE_SEPARATOR) {
+            return Err(ImportError::SupabaseNamespacedRole {
+                role: name.to_owned(),
+                username: username.to_owned(),
+            });
+        }
+        roles.push(name.to_owned());
+    }
+
+    Ok(roles)
+}
+
 fn names_from_metadata(metadata: &Map<String, Value>) -> (Option<String>, Option<String>) {
     let first = first_string(metadata, &FIRST_NAME_KEYS);
     let last = first_string(metadata, &LAST_NAME_KEYS);
@@ -244,9 +248,6 @@ fn split_full_name(full: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-/// Supabase serialises an absent email or phone as `""` rather than `null`, so
-/// a plain `Option<String>` would carry an empty string into the blueprint and
-/// create users with a blank address.
 fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -280,6 +281,8 @@ struct SupabaseUser {
     is_anonymous: bool,
     #[serde(default)]
     user_metadata: Map<String, Value>,
+    #[serde(default)]
+    app_metadata: Map<String, Value>,
 }
 
 impl SupabaseUser {
@@ -305,6 +308,7 @@ mod tests {
             deleted_at: None,
             is_anonymous: false,
             user_metadata: Map::new(),
+            app_metadata: Map::new(),
         }
     }
 
@@ -323,9 +327,24 @@ mod tests {
             .collect()
     }
 
+    fn json_metadata(raw: &str) -> Map<String, Value> {
+        serde_json::from_str(raw).expect("metadata fixture")
+    }
+
+    fn user_with_roles(email: &str, roles: &[&str]) -> UserBlueprint {
+        UserBlueprint {
+            username: email.to_owned(),
+            email: Some(email.to_owned()),
+            firstname: None,
+            lastname: None,
+            email_verified: Some(true),
+            roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+        }
+    }
+
     #[test]
     fn uses_the_full_email_as_username() {
-        let blueprint = map_user(confirmed_email_user("id-1", "alice@acme.test"));
+        let blueprint = map_user(confirmed_email_user("id-1", "alice@acme.test")).expect("map");
         assert_eq!(blueprint.username, "alice@acme.test");
         assert_eq!(blueprint.email.as_deref(), Some("alice@acme.test"));
         assert_eq!(blueprint.email_verified, Some(true));
@@ -336,14 +355,15 @@ mod tests {
         let blueprint = map_user(SupabaseUser {
             phone: Some("+33612345678".to_owned()),
             ..user("id-2")
-        });
+        })
+        .expect("map");
         assert_eq!(blueprint.username, "+33612345678");
         assert_eq!(blueprint.email, None);
     }
 
     #[test]
     fn falls_back_to_the_supabase_id_when_there_is_neither() {
-        let blueprint = map_user(user("8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11"));
+        let blueprint = map_user(user("8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11")).expect("map");
         assert_eq!(blueprint.username, "8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11");
     }
 
@@ -352,7 +372,8 @@ mod tests {
         let blueprint = map_user(SupabaseUser {
             email: Some("bob@acme.test".to_owned()),
             ..user("id-3")
-        });
+        })
+        .expect("map");
         assert_eq!(blueprint.email_verified, Some(false));
     }
 
@@ -361,7 +382,8 @@ mod tests {
         let blueprint = map_user(SupabaseUser {
             phone: Some("+33612345678".to_owned()),
             ..user("id-4")
-        });
+        })
+        .expect("map");
         assert_eq!(blueprint.email_verified, None);
     }
 
@@ -463,10 +485,8 @@ mod tests {
 
     #[test]
     fn reads_oidc_claim_names_from_metadata() {
-        let (first, last) = names_from_metadata(&metadata(&[
-            ("given_name", "Alice"),
-            ("family_name", "Doe"),
-        ]));
+        let (first, last) =
+            names_from_metadata(&metadata(&[("given_name", "Alice"), ("family_name", "Doe")]));
         assert_eq!(first.as_deref(), Some("Alice"));
         assert_eq!(last.as_deref(), Some("Doe"));
     }
@@ -502,15 +522,120 @@ mod tests {
         let blueprint = map_user(SupabaseUser {
             user_metadata: metadata(&[("full_name", "Alice Doe")]),
             ..confirmed_email_user("id-13", "alice@acme.test")
-        });
+        })
+        .expect("map");
         assert_eq!(blueprint.firstname.as_deref(), Some("Alice"));
         assert_eq!(blueprint.lastname.as_deref(), Some("Doe"));
     }
 
     #[test]
-    fn imports_no_roles() {
-        let blueprint = map_user(confirmed_email_user("id-14", "alice@acme.test"));
+    fn reads_a_roles_array_from_app_metadata() {
+        let roles = roles_from_metadata(
+            &json_metadata(r#"{"roles":["admin","billing"]}"#),
+            "alice@acme.test",
+        )
+        .expect("roles");
+        assert_eq!(roles, vec!["admin".to_owned(), "billing".to_owned()]);
+    }
+
+    #[test]
+    fn reads_a_single_role_string_from_app_metadata() {
+        let roles = roles_from_metadata(&json_metadata(r#"{"role":"admin"}"#), "alice@acme.test")
+            .expect("roles");
+        assert_eq!(roles, vec!["admin".to_owned()]);
+    }
+
+    #[test]
+    fn merges_both_role_conventions_without_duplicating() {
+        let roles = roles_from_metadata(
+            &json_metadata(r#"{"roles":["admin","billing"],"role":"admin"}"#),
+            "alice@acme.test",
+        )
+        .expect("roles");
+        assert_eq!(roles, vec!["admin".to_owned(), "billing".to_owned()]);
+    }
+
+    #[test]
+    fn never_reads_supabase_own_app_metadata_keys_as_roles() {
+        let roles = roles_from_metadata(
+            &json_metadata(r#"{"provider":"email","providers":["email","google"]}"#),
+            "alice@acme.test",
+        )
+        .expect("roles");
+        assert!(roles.is_empty());
+    }
+
+    #[test]
+    fn ignores_role_entries_that_are_not_strings() {
+        let roles = roles_from_metadata(
+            &json_metadata(r#"{"roles":["admin",42,null,{"a":1}]}"#),
+            "alice@acme.test",
+        )
+        .expect("roles");
+        assert_eq!(roles, vec!["admin".to_owned()]);
+    }
+
+    #[test]
+    fn skips_blank_role_names() {
+        let roles = roles_from_metadata(
+            &json_metadata(r#"{"roles":["  ","admin",""]}"#),
+            "alice@acme.test",
+        )
+        .expect("roles");
+        assert_eq!(roles, vec!["admin".to_owned()]);
+    }
+
+    #[test]
+    fn rejects_a_role_name_that_collides_with_the_client_scope_syntax() {
+        let rejected = roles_from_metadata(
+            &json_metadata(r#"{"roles":["billing:read"]}"#),
+            "alice@acme.test",
+        );
+        assert!(matches!(
+            rejected,
+            Err(ImportError::SupabaseNamespacedRole { role, username })
+                if role == "billing:read" && username == "alice@acme.test"
+        ));
+    }
+
+    #[test]
+    fn carries_roles_onto_the_user_blueprint() {
+        let blueprint = map_user(SupabaseUser {
+            app_metadata: json_metadata(r#"{"provider":"email","roles":["admin"]}"#),
+            ..confirmed_email_user("id-15", "alice@acme.test")
+        })
+        .expect("map");
+        assert_eq!(blueprint.roles, vec!["admin".to_owned()]);
+    }
+
+    #[test]
+    fn imports_no_roles_when_app_metadata_names_none() {
+        let blueprint = map_user(confirmed_email_user("id-14", "alice@acme.test")).expect("map");
         assert!(blueprint.roles.is_empty());
+    }
+
+    #[test]
+    fn builds_a_sorted_deduplicated_catalogue_from_the_users() {
+        let catalogue = role_catalogue(&[
+            user_with_roles("alice@acme.test", &["billing", "admin"]),
+            user_with_roles("bob@acme.test", &["admin", "support"]),
+        ]);
+        let names: Vec<&str> = catalogue.iter().map(|role| role.name.as_str()).collect();
+        assert_eq!(names, vec!["admin", "billing", "support"]);
+    }
+
+    #[test]
+    fn catalogue_carries_no_description_or_permission() {
+        let catalogue = role_catalogue(&[user_with_roles("alice@acme.test", &["admin"])]);
+        assert_eq!(catalogue.len(), 1);
+        assert_eq!(catalogue[0].description, None);
+        assert!(catalogue[0].permissions.is_empty());
+    }
+
+    #[test]
+    fn catalogue_is_empty_when_no_user_names_a_role() {
+        let catalogue = role_catalogue(&[user_with_roles("alice@acme.test", &[])]);
+        assert!(catalogue.is_empty());
     }
 
     #[test]

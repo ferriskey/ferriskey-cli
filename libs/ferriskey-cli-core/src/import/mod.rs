@@ -237,6 +237,12 @@ pub enum ImportError {
          pin a single organization with --source-org / org-id, or grant the token an IAM manager role"
     )]
     ZitadelOrgListingForbidden,
+    #[error(
+        "Supabase role '{role}' on user '{username}' contains ':', which a realm blueprint \
+         reserves for client-scoped roles ('client_id:role_name'); Supabase defines no clients, \
+         so rename the role in app_metadata before importing"
+    )]
+    SupabaseNamespacedRole { role: String, username: String },
     #[error("stored source '{name}' has kind '{kind}', which is not a valid import kind")]
     InvalidStoredKind { name: String, kind: String },
     #[error("failed to read source file '{path}'")]
