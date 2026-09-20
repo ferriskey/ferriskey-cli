@@ -3,6 +3,7 @@
 
 pub mod config;
 pub mod keycloak;
+pub mod supabase;
 pub mod zitadel;
 
 use ferriskey_cli_commands::{ImportSource, RealmImportArgs};
@@ -12,6 +13,7 @@ use crate::config::{FileContextRepository, StoredSource};
 use super::{ImportError, RealmSource};
 use config::ConfigSource;
 use keycloak::KeycloakSource;
+use supabase::{SupabaseSource, UserFilters};
 use zitadel::ZitadelSource;
 
 /// Builds the appropriate [`RealmSource`] from the parsed CLI arguments.
@@ -57,6 +59,23 @@ fn build_from_inline(
             args.source_org.clone(),
             args.target_realm.clone().or_else(|| args.source_realm.clone()),
         )?)),
+        ImportSource::Supabase => Ok(Box::new(SupabaseSource::build(
+            args.source_url.clone(),
+            args.source_token.clone(),
+            args.target_realm.clone().or_else(|| args.source_realm.clone()),
+            user_filters(args),
+        )?)),
+    }
+}
+
+/// Supabase's account filters are per-run choices about which rows to replay,
+/// so they come from the flags only and are never read back from a stored
+/// source — a saved source must not silently widen a later import.
+fn user_filters(args: &RealmImportArgs) -> UserFilters {
+    UserFilters {
+        include_deleted: args.source_include_deleted,
+        include_anonymous: args.source_include_anonymous,
+        include_unconfirmed: args.source_include_unconfirmed,
     }
 }
 
@@ -83,6 +102,15 @@ fn build_from_stored(
                 .clone()
                 .or_else(|| args.source_realm.clone())
                 .or_else(|| stored.realm.clone()),
+        )?)),
+        "supabase" => Ok(Box::new(SupabaseSource::build(
+            args.source_url.clone().or_else(|| Some(stored.url.clone())),
+            args.source_token.clone().or_else(|| stored.token.clone()),
+            args.target_realm
+                .clone()
+                .or_else(|| args.source_realm.clone())
+                .or_else(|| stored.realm.clone()),
+            user_filters(args),
         )?)),
         other => Err(ImportError::InvalidStoredKind {
             name: name.to_owned(),
