@@ -451,6 +451,7 @@ fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
                 println!("  users created:        {}", report.users_created);
                 println!("  role assignments:     {}", report.role_assignments);
                 println!("  passwords imported:   {}", report.passwords_imported);
+                println!("  passwords failed:     {}", report.passwords_failed);
                 println!("  already present:      {}", report.already_present);
                 if !report.client_secrets.is_empty() {
                     println!("  client secrets:");

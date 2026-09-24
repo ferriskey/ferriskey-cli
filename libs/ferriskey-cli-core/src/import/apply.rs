@@ -414,6 +414,7 @@ pub fn apply_blueprint(
     }
 
     // 5. Users, with realm-role assignments.
+    let mut password_import_unsupported = false;
     for user in &blueprint.users {
         let existing_user = match find_existing_user(client, realm, &user.username) {
             Ok(found) => found,
@@ -455,19 +456,37 @@ pub fn apply_blueprint(
         let Some(user_id) = user_id else { continue };
 
         if let Some(credential) = &user.credential {
-            match client.import_password_credential(realm, &user_id, &credential.to_request()) {
-                Ok(()) => report.passwords_imported += 1,
-                Err(e) if is_conflict(&e) => {
-                    report.already_present += 1;
-                    report.warnings.push(format!(
-                        "user '{}' already has a password, keeping it",
-                        user.username
-                    ));
+            if password_import_unsupported {
+                report.passwords_failed += 1;
+            } else {
+                match client.import_password_credential(realm, &user_id, &credential.to_request()) {
+                    Ok(()) => report.passwords_imported += 1,
+                    Err(e) if is_conflict(&e) => {
+                        report.already_present += 1;
+                        report.warnings.push(format!(
+                            "user '{}' already has a password, keeping it",
+                            user.username
+                        ));
+                    }
+                    Err(e) if is_endpoint_absent(&e) => {
+                        password_import_unsupported = true;
+                        report.passwords_failed += 1;
+                        report.warnings.push(
+                            "this FerrisKey server has no POST \
+                             realms/{realm}/users/{id}/credentials/import endpoint, so no password \
+                             was carried over — upgrade the server, or set passwords with \
+                             `ferris-ctl user set-password`"
+                                .to_owned(),
+                        );
+                    }
+                    Err(e) => {
+                        report.passwords_failed += 1;
+                        report.warnings.push(format!(
+                            "could not import the password of user '{}': {e}",
+                            user.username
+                        ));
+                    }
                 }
-                Err(e) => report.warnings.push(format!(
-                    "could not import the password of user '{}': {e}",
-                    user.username
-                )),
             }
         }
 
@@ -692,6 +711,14 @@ fn user_request(user: &super::UserBlueprint) -> CreateUserRequest {
     }
 }
 
+fn is_endpoint_absent(error: &FerriskeyClientError) -> bool {
+    matches!(
+        error,
+        FerriskeyClientError::Api { status, .. }
+            if *status == StatusCode::NOT_FOUND || *status == StatusCode::METHOD_NOT_ALLOWED
+    )
+}
+
 /// Whether an API error means "this entity already exists" — treated as a skip.
 ///
 /// Some already-deployed servers surface a duplicate-key unique-constraint
@@ -819,6 +846,25 @@ mod tests {
             status,
             body: body.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_server_without_the_import_route_is_recognized_from_404_and_405() {
+        assert!(is_endpoint_absent(&api_error(StatusCode::NOT_FOUND, "")));
+        assert!(is_endpoint_absent(&api_error(
+            StatusCode::METHOD_NOT_ALLOWED,
+            ""
+        )));
+    }
+
+    #[test]
+    fn a_rejected_hash_is_not_mistaken_for_a_missing_endpoint() {
+        assert!(!is_endpoint_absent(&api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bcrypt cost 3 is outside 4..=14"
+        )));
+        assert!(!is_endpoint_absent(&api_error(StatusCode::FORBIDDEN, "")));
+        assert!(!is_endpoint_absent(&api_error(StatusCode::CONFLICT, "")));
     }
 
     #[test]

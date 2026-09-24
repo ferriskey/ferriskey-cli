@@ -229,6 +229,7 @@ pub struct ImportReport {
     pub users_created: usize,
     pub role_assignments: usize,
     pub passwords_imported: usize,
+    pub passwords_failed: usize,
     /// Entities skipped because they already existed — distinguishes a
     /// converging replay from a run that did nothing.
     pub already_present: usize,
