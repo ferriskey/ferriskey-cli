@@ -24,6 +24,7 @@ pub enum SourceSubcommand {
 pub enum SourceKind {
     Keycloak,
     Zitadel,
+    Supabase,
 }
 
 impl SourceKind {
@@ -31,6 +32,7 @@ impl SourceKind {
         match self {
             SourceKind::Keycloak => "keycloak",
             SourceKind::Zitadel => "zitadel",
+            SourceKind::Supabase => "supabase",
         }
     }
 }
@@ -61,7 +63,8 @@ pub struct SourceAddArgs {
     #[arg(long = "client-secret")]
     pub client_secret: Option<String>,
 
-    /// Bearer token / personal access token (Zitadel PAT, or a ready Keycloak token).
+    /// Bearer token / personal access token (Zitadel PAT, Supabase
+    /// `service_role` key, or a ready Keycloak token).
     #[arg(long)]
     pub token: Option<String>,
 

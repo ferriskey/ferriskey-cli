@@ -144,6 +144,11 @@ pub enum ImportSource {
     Keycloak,
     /// A live Zitadel instance, read through its Management API.
     Zitadel,
+    /// A Supabase project, read through its Auth (GoTrue) Admin API. Users
+    /// only: Supabase has no client or role catalogue, and passwords cannot be
+    /// carried over (neither side exposes a hash, so imported users need a
+    /// password reset).
+    Supabase,
 }
 
 /// Arguments for `realm import`.
@@ -184,9 +189,26 @@ pub struct RealmImportArgs {
     #[arg(long = "source-client-secret")]
     pub source_client_secret: Option<String>,
 
-    /// Bearer token / personal access token for the source (Zitadel PAT, or a ready Keycloak token).
+    /// Bearer token / personal access token for the source (Zitadel PAT,
+    /// Supabase `service_role` key, or a ready Keycloak token).
     #[arg(long = "source-token")]
     pub source_token: Option<String>,
+
+    /// Import users an operator soft-deleted (Supabase). Dropped by default:
+    /// their `deleted_at` is set but the row survives, so a plain import would
+    /// resurrect accounts somebody removed on purpose.
+    #[arg(long = "source-include-deleted", default_value_t = false)]
+    pub source_include_deleted: bool,
+
+    /// Import anonymous sign-in sessions (Supabase). Dropped by default: they
+    /// are real rows with neither an email nor a phone number.
+    #[arg(long = "source-include-anonymous", default_value_t = false)]
+    pub source_include_anonymous: bool,
+
+    /// Import users who never confirmed an email or a phone number (Supabase).
+    /// Dropped by default.
+    #[arg(long = "source-include-unconfirmed", default_value_t = false)]
+    pub source_include_unconfirmed: bool,
 
     /// Override the name of the realm created in FerrisKey (defaults to the source realm name).
     #[arg(long = "target-realm")]
