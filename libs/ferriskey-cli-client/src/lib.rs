@@ -281,6 +281,16 @@ pub struct SetPasswordRequest {
     pub temporary: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportPasswordCredentialRequest {
+    pub algorithm: String,
+    pub secret_data: String,
+    pub hash_iterations: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
+    pub temporary: bool,
+}
+
 impl FerriskeyClient {
     pub fn new(
         base_url: impl Into<String>,
@@ -796,6 +806,30 @@ impl FerriskeyClient {
         let response = self
             .http
             .put(self.endpoint(&format!("realms/{realm}/users/{user_id}/reset-password")))
+            .bearer_auth(&self.token)
+            .json(request)
+            .send()?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(FerriskeyClientError::Api { status, body });
+        }
+
+        Ok(())
+    }
+
+    pub fn import_password_credential(
+        &self,
+        realm: &str,
+        user_id: &str,
+        request: &ImportPasswordCredentialRequest,
+    ) -> Result<(), FerriskeyClientError> {
+        let response = self
+            .http
+            .post(self.endpoint(&format!(
+                "realms/{realm}/users/{user_id}/credentials/import"
+            )))
             .bearer_auth(&self.token)
             .json(request)
             .send()?;
