@@ -61,6 +61,8 @@ pub struct UserRepresentation {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateUserRequest {
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub firstname: Option<String>,
     pub lastname: Option<String>,
     pub email: Option<String>,

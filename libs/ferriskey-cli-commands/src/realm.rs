@@ -235,6 +235,11 @@ pub struct RealmImportArgs {
     #[arg(long = "source-passwords", value_name = "FILE", verbatim_doc_comment)]
     pub source_passwords: Option<PathBuf>,
 
+    /// Create each user with the id it already has in Supabase, so the `sub` of
+    /// every token survives the migration (Supabase only).
+    #[arg(long = "source-preserve-ids", default_value_t = false)]
+    pub source_preserve_ids: bool,
+
     /// Override the name of the realm created in FerrisKey (defaults to the source realm name).
     #[arg(long = "target-realm")]
     pub target_realm: Option<String>,

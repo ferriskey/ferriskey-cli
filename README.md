@@ -127,6 +127,40 @@ source is an error rather than a silently ignored flag. Like the account filters
 below, it is never stored in a saved source — carrying passwords is a per-run
 decision.
 
+#### Identifiers
+
+`--source-preserve-ids` creates each user with the id it already has in
+Supabase, instead of letting FerrisKey mint a new one:
+
+    ferris-ctl realm import \
+      --from supabase \
+      --source-url https://<project>.supabase.co \
+      --source-token <service_role key> \
+      --source-preserve-ids \
+      --target-realm my-realm
+
+That id becomes the `sub` claim of every token FerrisKey issues. A business
+database that stores `auth.users.id` as a foreign key therefore keeps working
+across the migration; without the flag, every one of those keys points at an
+account that no longer exists under that id.
+
+Reusing a Supabase id is not a reassignment: OpenID Connect scopes `sub`
+uniqueness to the issuer, and the issuer changes from
+`https://<ref>.supabase.co/auth/v1` to `.../realms/<realm>`. The same rule is
+why the flag only affects accounts the import creates — a `sub` is never
+reassigned, so a user the target realm already holds keeps the id it was given,
+and the import reports it under `already present`.
+
+The server has to accept a supplied id. One that does not silently mints its
+own, so the import compares what came back against what it asked for and stops
+on the first account that does not match, rather than migrating a whole
+directory onto new subjects. An id already taken elsewhere in the instance —
+possibly in a realm the token cannot see — stops it the same way, naming the
+account.
+
+Like `--source-passwords`, the flag is Supabase-only and is never stored in a
+saved source.
+
 #### Roles
 
 Supabase has no role catalogue. Roles are read from each user's `app_metadata`,

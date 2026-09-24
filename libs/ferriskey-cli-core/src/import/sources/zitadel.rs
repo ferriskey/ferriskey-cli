@@ -215,6 +215,7 @@ fn map_human(user_name: String, human: Human) -> UserBlueprint {
     let email = human.email.unwrap_or_default();
     UserBlueprint {
         username: user_name,
+        id: None,
         email: email.email,
         firstname: profile.first_name,
         lastname: profile.last_name,

@@ -436,10 +436,27 @@ pub fn apply_blueprint(
             }
             None => match client.create_user(realm, &user_request(user)) {
                 Ok(created) => {
+                    if let Some(requested) = &user.id
+                        && !created.id.eq_ignore_ascii_case(requested)
+                    {
+                        return Err(ImportError::UserIdNotPreserved {
+                            username: user.username.clone(),
+                            requested: requested.clone(),
+                            actual: created.id,
+                        });
+                    }
                     report.users_created += 1;
                     (Some(created.id), false)
                 }
                 Err(e) if is_conflict(&e) => {
+                    if is_user_id_conflict(&e)
+                        && let Some(id) = user.id.clone()
+                    {
+                        return Err(ImportError::UserIdAlreadyTaken {
+                            username: user.username.clone(),
+                            id,
+                        });
+                    }
                     report.already_present += 1;
                     report
                         .warnings
@@ -704,6 +721,7 @@ fn client_request(client_bp: &ClientBlueprint) -> CreateClientRequest {
 fn user_request(user: &super::UserBlueprint) -> CreateUserRequest {
     CreateUserRequest {
         username: user.username.clone(),
+        id: user.id.clone(),
         firstname: user.firstname.clone(),
         lastname: user.lastname.clone(),
         email: user.email.clone(),
@@ -716,6 +734,16 @@ fn is_endpoint_absent(error: &FerriskeyClientError) -> bool {
         error,
         FerriskeyClientError::Api { status, .. }
             if *status == StatusCode::NOT_FOUND || *status == StatusCode::METHOD_NOT_ALLOWED
+    )
+}
+
+const USER_ID_TAKEN_REASON: &str = "user_id_already_exists";
+
+fn is_user_id_conflict(error: &FerriskeyClientError) -> bool {
+    matches!(
+        error,
+        FerriskeyClientError::Api { status, body }
+            if *status == StatusCode::CONFLICT && body.contains(USER_ID_TAKEN_REASON)
     )
 }
 
@@ -781,6 +809,7 @@ mod tests {
             }],
             users: vec![UserBlueprint {
                 username: "alice".to_owned(),
+                id: None,
                 email: None,
                 firstname: None,
                 lastname: None,
@@ -848,6 +877,19 @@ mod tests {
         }
     }
 
+    fn user_blueprint() -> super::super::UserBlueprint {
+        super::super::UserBlueprint {
+            username: "alice".to_owned(),
+            id: None,
+            email: None,
+            firstname: None,
+            lastname: None,
+            email_verified: None,
+            roles: Vec::new(),
+            credential: None,
+        }
+    }
+
     #[test]
     fn a_server_without_the_import_route_is_recognized_from_404_and_405() {
         assert!(is_endpoint_absent(&api_error(StatusCode::NOT_FOUND, "")));
@@ -865,6 +907,41 @@ mod tests {
         )));
         assert!(!is_endpoint_absent(&api_error(StatusCode::FORBIDDEN, "")));
         assert!(!is_endpoint_absent(&api_error(StatusCode::CONFLICT, "")));
+    }
+
+    #[test]
+    fn a_blueprint_id_reaches_the_create_request() {
+        let mut user = user_blueprint();
+        user.id = Some("2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11".to_owned());
+        let request = user_request(&user);
+        assert_eq!(
+            request.id.as_deref(),
+            Some("2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11")
+        );
+    }
+
+    #[test]
+    fn a_user_without_an_id_sends_no_id_field() {
+        let json = serde_json::to_value(user_request(&user_blueprint())).expect("serialize");
+        assert!(
+            json.get("id").is_none(),
+            "the server denies unknown fields; a null id would have to be tolerated too"
+        );
+    }
+
+    #[test]
+    fn a_taken_id_is_told_apart_from_a_taken_username() {
+        let taken_id = api_error(
+            StatusCode::CONFLICT,
+            r#"{"reason":"user_id_already_exists","message":"A user already exists with this id"}"#,
+        );
+        let taken_username = api_error(StatusCode::CONFLICT, r#"{"reason":"user_already_exists"}"#);
+        assert!(is_user_id_conflict(&taken_id));
+        assert!(!is_user_id_conflict(&taken_username));
+        assert!(
+            is_conflict(&taken_id),
+            "a taken id is still a conflict, so the existing arm keeps catching it"
+        );
     }
 
     #[test]

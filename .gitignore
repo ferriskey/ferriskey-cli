@@ -6,3 +6,6 @@
 *.key*
 .DS_Store
 **/.DS_Store
+
+.claude/*.local.*
+.claude/settings.local.json

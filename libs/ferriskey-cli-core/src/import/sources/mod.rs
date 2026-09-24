@@ -44,12 +44,12 @@ fn build_from_inline(
 ) -> Result<Box<dyn RealmSource>, ImportError> {
     match kind {
         ImportSource::Config => {
-            reject_passwords(args, "config")?;
+            reject_supabase_only(args, "config")?;
             let path = args.file.clone().ok_or(ImportError::MissingArg("--file"))?;
             Ok(Box::new(ConfigSource::new(path)))
         }
         ImportSource::Keycloak => {
-            reject_passwords(args, "keycloak")?;
+            reject_supabase_only(args, "keycloak")?;
             Ok(Box::new(KeycloakSource::build(
                 args.source_url.clone(),
                 args.source_realm.clone(),
@@ -59,7 +59,7 @@ fn build_from_inline(
             )?))
         }
         ImportSource::Zitadel => {
-            reject_passwords(args, "zitadel")?;
+            reject_supabase_only(args, "zitadel")?;
             Ok(Box::new(ZitadelSource::build(
                 args.source_url.clone(),
                 args.source_token.clone(),
@@ -77,15 +77,19 @@ fn build_from_inline(
                 .or_else(|| args.source_realm.clone()),
             user_filters(args),
             args.source_passwords.clone(),
+            args.source_preserve_ids,
         )?)),
     }
 }
 
-fn reject_passwords(args: &RealmImportArgs, kind: &'static str) -> Result<(), ImportError> {
-    match args.source_passwords {
-        Some(_) => Err(ImportError::PasswordsUnsupportedBySource(kind)),
-        None => Ok(()),
+fn reject_supabase_only(args: &RealmImportArgs, kind: &'static str) -> Result<(), ImportError> {
+    if args.source_passwords.is_some() {
+        return Err(ImportError::PasswordsUnsupportedBySource(kind));
     }
+    if args.source_preserve_ids {
+        return Err(ImportError::PreserveIdsUnsupportedBySource(kind));
+    }
+    Ok(())
 }
 
 fn user_filters(args: &RealmImportArgs) -> UserFilters {
@@ -103,7 +107,7 @@ fn build_from_stored(
 ) -> Result<Box<dyn RealmSource>, ImportError> {
     match stored.kind.as_str() {
         "keycloak" => {
-            reject_passwords(args, "keycloak")?;
+            reject_supabase_only(args, "keycloak")?;
             Ok(Box::new(KeycloakSource::build(
                 args.source_url.clone().or_else(|| Some(stored.url.clone())),
                 args.source_realm.clone().or_else(|| stored.realm.clone()),
@@ -117,7 +121,7 @@ fn build_from_stored(
             )?))
         }
         "zitadel" => {
-            reject_passwords(args, "zitadel")?;
+            reject_supabase_only(args, "zitadel")?;
             Ok(Box::new(ZitadelSource::build(
                 args.source_url.clone().or_else(|| Some(stored.url.clone())),
                 args.source_token.clone().or_else(|| stored.token.clone()),
@@ -137,6 +141,7 @@ fn build_from_stored(
                 .or_else(|| stored.realm.clone()),
             user_filters(args),
             args.source_passwords.clone(),
+            args.source_preserve_ids,
         )?)),
         other => Err(ImportError::InvalidStoredKind {
             name: name.to_owned(),
@@ -192,6 +197,28 @@ mod tests {
                 built,
                 Err(ImportError::PasswordsUnsupportedBySource(_))
             ));
+        }
+    }
+
+    #[test]
+    fn rejects_preserved_ids_on_a_source_that_exposes_none() {
+        let args = RealmImportArgs {
+            source_preserve_ids: true,
+            source_url: Some("https://example.test".to_owned()),
+            source_token: Some("token".to_owned()),
+            file: Some(PathBuf::from("realm.yaml")),
+            ..Default::default()
+        };
+        for (kind, name) in [
+            (ImportSource::Config, "config"),
+            (ImportSource::Keycloak, "keycloak"),
+            (ImportSource::Zitadel, "zitadel"),
+        ] {
+            let built = build_from_inline(&kind, &args);
+            assert!(
+                matches!(built, Err(ImportError::PreserveIdsUnsupportedBySource(got)) if got == name),
+                "--source-preserve-ids must not be silently ignored by '{name}'"
+            );
         }
     }
 
