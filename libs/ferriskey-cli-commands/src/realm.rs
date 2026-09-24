@@ -235,20 +235,8 @@ pub struct RealmImportArgs {
     #[arg(long = "source-passwords", value_name = "FILE", verbatim_doc_comment)]
     pub source_passwords: Option<PathBuf>,
 
-    /// Create every user with the id it already has in Supabase, instead of
-    /// letting FerrisKey mint a new one.
-    ///
-    /// The id becomes the `sub` claim of every token FerrisKey issues, so a
-    /// business database keyed on `auth.users.id` keeps working after the
-    /// migration. Without this flag those keys point at nothing.
-    ///
-    /// A `sub` is never reassigned, so this only applies to accounts the import
-    /// creates. Users that already exist in the target realm keep the id they
-    /// were given, and the import says so.
-    ///
-    /// Requires a FerrisKey server that accepts a supplied id. An older one
-    /// ignores it and mints its own, which the import detects and refuses to
-    /// continue past rather than migrate the whole directory onto new subjects.
+    /// Create each user with the id it already has in Supabase, so the `sub` of
+    /// every token survives the migration (Supabase only).
     #[arg(long = "source-preserve-ids", default_value_t = false)]
     pub source_preserve_ids: bool,
 
