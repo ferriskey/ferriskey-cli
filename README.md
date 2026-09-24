@@ -56,15 +56,45 @@ the `auth.users` table:
       --target-realm my-realm
 
 The export is needed because the Auth Admin API never serves password hashes:
-they live only in `auth.users.encrypted_password`. Produce it once from the
-Supabase SQL editor (then *Download CSV*), or with `psql`:
+they live only in `auth.users.encrypted_password`.
+
+##### Producing the export
+
+From the dashboard **SQL editor**, run the query and use the download button
+above the results:
 
     select id, encrypted_password from auth.users;
 
-Only `id` and `encrypted_password` are read, and extra columns are ignored — a
-plain `select *` export works as-is. Rows are joined onto users by
-`auth.users.id`, never by email: an email is nullable in Supabase and is
-therefore not a key.
+Or with `psql`, which is the better option on a large directory:
+
+    psql "<connection string>" -c \
+      "\copy (select id, encrypted_password from auth.users) to 'auth_users.csv' with (format csv, header)"
+
+The connection string sits behind the project's **Connect** button. Pick the
+**Session pooler** one if your machine has no IPv6: the direct connection
+(`db.<project-ref>.supabase.co:5432`) is IPv6-only unless the project has the
+IPv4 add-on, while the pooler is IPv4 on every plan.
+
+The backslash in `\copy` is not cosmetic. `\copy` is a psql command and writes
+the file on *your* machine; a plain `COPY … TO` is a server-side statement that
+a managed Supabase instance will not let you run.
+
+If neither route is open to you — permissions, or a directory too large to pull
+yourself — Supabase support can produce the `auth.users` export on request.
+
+##### What the CLI reads from it
+
+Only `id` and `encrypted_password`, and extra columns are ignored — a plain
+`select *` export works as-is, so an export you already have need not be redone.
+A UTF-8 BOM on the header line is tolerated, which the SQL editor's download
+emits.
+
+Rows are joined onto users by `auth.users.id`, never by email: an email is
+nullable in Supabase and is therefore not a key.
+
+**The file holds every password hash in the directory.** bcrypt is slow to
+attack, but this is still authentication material: keep the file to yourself,
+and delete it once the import has run.
 
 FerrisKey stores the bcrypt hash verbatim and re-encodes it as argon2id on the
 user's first successful login, so the migration is invisible to the end user and
