@@ -214,6 +214,7 @@ fn map_client(client: KcClient, roles: Vec<RoleBlueprint>) -> ClientBlueprint {
 fn map_user(user: KcUser) -> crate::import::UserBlueprint {
     crate::import::UserBlueprint {
         username: user.username,
+        id: None,
         email: user.email,
         firstname: user.first_name,
         lastname: user.last_name,

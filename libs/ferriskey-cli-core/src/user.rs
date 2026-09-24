@@ -221,6 +221,7 @@ fn create_user(
     let client = auth_client(&context)?;
     let request = CreateUserRequest {
         username: args.username,
+        id: None,
         firstname: args.firstname,
         lastname: args.lastname,
         email: args.email,

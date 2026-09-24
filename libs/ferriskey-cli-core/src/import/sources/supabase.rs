@@ -46,6 +46,7 @@ pub struct SupabaseSource {
     realm_name: Option<String>,
     filters: UserFilters,
     passwords: PasswordCatalogue,
+    preserve_ids: bool,
     http: Client,
 }
 
@@ -56,6 +57,7 @@ impl SupabaseSource {
         realm_name: Option<String>,
         filters: UserFilters,
         passwords_export: Option<PathBuf>,
+        preserve_ids: bool,
     ) -> Result<Self, ImportError> {
         let base_url =
             normalize_base_url(&base_url.ok_or(ImportError::MissingArg("--source-url"))?);
@@ -71,6 +73,7 @@ impl SupabaseSource {
             realm_name,
             filters,
             passwords,
+            preserve_ids,
             http: Client::new(),
         })
     }
@@ -113,7 +116,7 @@ impl SupabaseSource {
                     continue;
                 }
                 if self.filters.keeps(&user) {
-                    users.push(map_user(user, &self.passwords)?);
+                    users.push(map_user(user, &self.passwords, self.preserve_ids)?);
                 }
             }
 
@@ -164,6 +167,7 @@ fn normalize_base_url(url: &str) -> String {
 fn map_user(
     user: SupabaseUser,
     passwords: &PasswordCatalogue,
+    preserve_ids: bool,
 ) -> Result<UserBlueprint, ImportError> {
     let (firstname, lastname) = names_from_metadata(&user.user_metadata);
     let email_verified = user
@@ -177,9 +181,11 @@ fn map_user(
         .unwrap_or_else(|| user.id.clone());
     let roles = roles_from_metadata(&user.app_metadata, &username)?;
     let credential = passwords.get(&user.id);
+    let id = preserve_ids.then(|| user.id.clone());
 
     Ok(UserBlueprint {
         username,
+        id,
         email: user.email,
         firstname,
         lastname,
@@ -358,6 +364,7 @@ mod tests {
     fn user_with_roles(email: &str, roles: &[&str]) -> UserBlueprint {
         UserBlueprint {
             username: email.to_owned(),
+            id: None,
             email: Some(email.to_owned()),
             firstname: None,
             lastname: None,
@@ -368,7 +375,11 @@ mod tests {
     }
 
     fn mapped(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
-        map_user(user, &PasswordCatalogue::default())
+        map_user(user, &PasswordCatalogue::default(), false)
+    }
+
+    fn mapped_preserving(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
+        map_user(user, &PasswordCatalogue::default(), true)
     }
 
     const BCRYPT_HASH: &str = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
@@ -384,10 +395,44 @@ mod tests {
     }
 
     #[test]
+    fn carries_no_id_unless_asked() {
+        let blueprint = mapped(confirmed_email_user(
+            "2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11",
+            "alice@acme.test",
+        ))
+        .expect("map");
+        assert!(blueprint.id.is_none());
+    }
+
+    #[test]
+    fn preserves_the_supabase_id_when_asked() {
+        let blueprint = mapped_preserving(confirmed_email_user(
+            "2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11",
+            "alice@acme.test",
+        ))
+        .expect("map");
+        assert_eq!(
+            blueprint.id.as_deref(),
+            Some("2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11")
+        );
+    }
+
+    #[test]
+    fn preserving_ids_leaves_the_username_derived_from_the_email() {
+        let blueprint = mapped_preserving(confirmed_email_user(
+            "2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11",
+            "alice@acme.test",
+        ))
+        .expect("map");
+        assert_eq!(blueprint.username, "alice@acme.test");
+    }
+
+    #[test]
     fn joins_a_password_onto_the_user_by_supabase_id() {
         let blueprint = map_user(
             confirmed_email_user("id-20", "alice@acme.test"),
             &catalogue_for("id-20"),
+            false,
         )
         .expect("map");
         let credential = blueprint.credential.expect("credential");
@@ -401,6 +446,7 @@ mod tests {
         let blueprint = map_user(
             confirmed_email_user("id-21", "alice@acme.test"),
             &catalogue_for("alice@acme.test"),
+            false,
         )
         .expect("map");
         assert!(
@@ -414,6 +460,7 @@ mod tests {
         let blueprint = map_user(
             confirmed_email_user("id-22", "bob@acme.test"),
             &catalogue_for("id-20"),
+            false,
         )
         .expect("map");
         assert!(blueprint.credential.is_none());
@@ -749,6 +796,7 @@ mod tests {
             None,
             UserFilters::default(),
             None,
+            false,
         );
         assert!(matches!(
             missing_url,
@@ -761,6 +809,7 @@ mod tests {
             None,
             UserFilters::default(),
             None,
+            false,
         );
         assert!(matches!(
             missing_key,

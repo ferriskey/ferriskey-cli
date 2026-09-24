@@ -676,6 +676,7 @@ mod tests {
             name: "acme".to_owned(),
             users: vec![UserBlueprint {
                 username: "alice".to_owned(),
+                id: None,
                 email: None,
                 firstname: None,
                 lastname: None,

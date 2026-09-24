@@ -150,6 +150,8 @@ impl ClientBlueprint {
 pub struct UserBlueprint {
     pub username: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub firstname: Option<String>,
@@ -280,6 +282,26 @@ pub enum ImportError {
         "--source-passwords only applies to '--from supabase'; the '{0}' source carries no password export"
     )]
     PasswordsUnsupportedBySource(&'static str),
+    #[error(
+        "--source-preserve-ids only applies to '--from supabase'; the '{0}' source exposes no \
+         identifier FerrisKey could reuse"
+    )]
+    PreserveIdsUnsupportedBySource(&'static str),
+    #[error(
+        "user '{username}' was created as {actual} instead of the requested {requested}: this \
+         FerrisKey server accepts no supplied id, so every subject would change. Upgrade the \
+         server, or drop --source-preserve-ids"
+    )]
+    UserIdNotPreserved {
+        username: String,
+        requested: String,
+        actual: String,
+    },
+    #[error(
+        "id {id} of user '{username}' is already taken in this FerrisKey instance, possibly by a \
+         realm this token cannot see. Nothing was written for that account"
+    )]
+    UserIdAlreadyTaken { username: String, id: String },
     #[error("failed to read the Supabase password export '{path}'")]
     PasswordCsv {
         path: String,
@@ -369,6 +391,7 @@ mod tests {
     fn a_user_without_credential_serializes_without_the_field() {
         let user = UserBlueprint {
             username: "alice".to_owned(),
+            id: None,
             email: None,
             firstname: None,
             lastname: None,
@@ -378,6 +401,39 @@ mod tests {
         };
         let yaml = serde_yaml::to_string(&user).expect("serialize");
         assert!(!yaml.contains("credential"));
+    }
+
+    #[test]
+    fn a_user_without_an_id_serializes_without_the_field() {
+        let user = UserBlueprint {
+            username: "alice".to_owned(),
+            id: None,
+            email: None,
+            firstname: None,
+            lastname: None,
+            email_verified: None,
+            roles: Vec::new(),
+            credential: None,
+        };
+        let json = serde_json::to_value(&user).expect("serialize");
+        assert!(json.get("id").is_none());
+    }
+
+    #[test]
+    fn a_user_id_survives_a_yaml_round_trip() {
+        let user = UserBlueprint {
+            username: "alice".to_owned(),
+            id: Some("2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11".to_owned()),
+            email: None,
+            firstname: None,
+            lastname: None,
+            email_verified: None,
+            roles: Vec::new(),
+            credential: None,
+        };
+        let yaml = serde_yaml::to_string(&user).expect("serialize");
+        let parsed: UserBlueprint = serde_yaml::from_str(&yaml).expect("deserialize");
+        assert_eq!(parsed.id, user.id);
     }
 
     #[test]
@@ -416,6 +472,7 @@ mod tests {
             }],
             users: vec![UserBlueprint {
                 username: "alice".to_owned(),
+                id: Some("2b6f0cc9-04a4-4d4f-9e58-1f6a4e3d0a11".to_owned()),
                 email: Some("alice@acme.test".to_owned()),
                 firstname: Some("Alice".to_owned()),
                 lastname: None,
