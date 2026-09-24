@@ -145,14 +145,14 @@ pub enum ImportSource {
     /// A live Zitadel instance, read through its Management API.
     Zitadel,
     /// A Supabase project, read through its Auth (GoTrue) Admin API. Users
-    /// only: Supabase has no client or role catalogue, and passwords cannot be
-    /// carried over (neither side exposes a hash, so imported users need a
-    /// password reset).
+    /// only: Supabase has no client or role catalogue. Password hashes are
+    /// carried over when `--source-passwords` points at a CSV export of
+    /// `auth.users`; without it, imported users need a password reset.
     Supabase,
 }
 
 /// Arguments for `realm import`.
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct RealmImportArgs {
     /// Source kind to import from. Optional when `--source-ref` is given (the
     /// kind is then read from the stored source).
@@ -209,6 +209,14 @@ pub struct RealmImportArgs {
     /// Dropped by default.
     #[arg(long = "source-include-unconfirmed", default_value_t = false)]
     pub source_include_unconfirmed: bool,
+
+    /// Carry Supabase passwords over, read from a CSV export of the `auth.users`
+    /// table (`select id, encrypted_password from auth.users`). The Auth Admin
+    /// API never serves those hashes, so the export is the only way to get them.
+    /// Only bcrypt hashes FerrisKey accepts are imported; every other account
+    /// arrives without credentials and needs a password reset.
+    #[arg(long = "source-passwords", value_name = "FILE")]
+    pub source_passwords: Option<PathBuf>,
 
     /// Override the name of the realm created in FerrisKey (defaults to the source realm name).
     #[arg(long = "target-realm")]

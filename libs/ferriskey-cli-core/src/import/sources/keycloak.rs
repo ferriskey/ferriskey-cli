@@ -219,6 +219,7 @@ fn map_user(user: KcUser) -> crate::import::UserBlueprint {
         lastname: user.last_name,
         email_verified: user.email_verified,
         roles: Vec::new(),
+        credential: None,
     }
 }
 

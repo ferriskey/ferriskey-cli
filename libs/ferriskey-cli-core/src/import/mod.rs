@@ -9,7 +9,8 @@ pub mod apply;
 pub mod sources;
 
 use ferriskey_cli_client::{
-    FerriskeyClientError, UpdateClientSettingsRequest, UpdateRealmSettingsRequest,
+    FerriskeyClientError, ImportPasswordCredentialRequest, UpdateClientSettingsRequest,
+    UpdateRealmSettingsRequest,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -160,7 +161,37 @@ pub struct UserBlueprint {
     /// `client_id:role_name` for a role scoped to that client.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<PasswordCredentialBlueprint>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasswordCredentialBlueprint {
+    pub algorithm: String,
+    pub secret_data: String,
+    pub hash_iterations: u32,
+}
+
+impl PasswordCredentialBlueprint {
+    pub fn to_request(&self) -> ImportPasswordCredentialRequest {
+        ImportPasswordCredentialRequest {
+            algorithm: self.algorithm.clone(),
+            secret_data: self.secret_data.clone(),
+            hash_iterations: self.hash_iterations,
+            salt: None,
+            temporary: false,
+        }
+    }
+
+    pub fn redacted(&self) -> Self {
+        Self {
+            secret_data: REDACTED_SECRET.to_owned(),
+            ..self.clone()
+        }
+    }
+}
+
+const REDACTED_SECRET: &str = "<redacted>";
 
 fn default_client_type() -> String {
     "public".to_owned()
@@ -197,6 +228,7 @@ pub struct ImportReport {
     pub client_roles_created: usize,
     pub users_created: usize,
     pub role_assignments: usize,
+    pub passwords_imported: usize,
     /// Entities skipped because they already existed — distinguishes a
     /// converging replay from a run that did nothing.
     pub already_present: usize,
@@ -243,6 +275,21 @@ pub enum ImportError {
          so rename the role in app_metadata before importing"
     )]
     SupabaseNamespacedRole { role: String, username: String },
+    #[error(
+        "--source-passwords only applies to '--from supabase'; the '{0}' source carries no password export"
+    )]
+    PasswordsUnsupportedBySource(&'static str),
+    #[error("failed to read the Supabase password export '{path}'")]
+    PasswordCsv {
+        path: String,
+        #[source]
+        source: csv::Error,
+    },
+    #[error(
+        "the Supabase password export '{path}' has no '{column}' column — export it with \
+         `select id, encrypted_password from auth.users`"
+    )]
+    PasswordCsvColumnMissing { path: String, column: &'static str },
     #[error("stored source '{name}' has kind '{kind}', which is not a valid import kind")]
     InvalidStoredKind { name: String, kind: String },
     #[error("failed to read source file '{path}'")]
@@ -274,6 +321,63 @@ pub enum ImportError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BCRYPT_HASH: &str = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+    fn credential() -> PasswordCredentialBlueprint {
+        PasswordCredentialBlueprint {
+            algorithm: "bcrypt".to_owned(),
+            secret_data: BCRYPT_HASH.to_owned(),
+            hash_iterations: 10,
+        }
+    }
+
+    #[test]
+    fn credential_request_sends_no_salt_and_is_never_temporary() {
+        let request = credential().to_request();
+        assert_eq!(request.algorithm, "bcrypt");
+        assert_eq!(request.secret_data, BCRYPT_HASH);
+        assert_eq!(request.hash_iterations, 10);
+        assert!(
+            request.salt.is_none(),
+            "bcrypt and argon2 embed their salt in secret_data"
+        );
+        assert!(
+            !request.temporary,
+            "an imported password must stay usable, not force a reset"
+        );
+    }
+
+    #[test]
+    fn credential_request_omits_the_salt_from_the_wire() {
+        let json = serde_json::to_value(credential().to_request()).expect("serialize");
+        assert!(json.get("salt").is_none());
+        assert_eq!(json["hash_iterations"], 10);
+    }
+
+    #[test]
+    fn redacting_a_credential_drops_the_hash_and_keeps_its_shape() {
+        let redacted = credential().redacted();
+        assert_eq!(redacted.algorithm, "bcrypt");
+        assert_eq!(redacted.hash_iterations, 10);
+        assert_ne!(redacted.secret_data, BCRYPT_HASH);
+        assert!(!redacted.secret_data.contains("$2a$"));
+    }
+
+    #[test]
+    fn a_user_without_credential_serializes_without_the_field() {
+        let user = UserBlueprint {
+            username: "alice".to_owned(),
+            email: None,
+            firstname: None,
+            lastname: None,
+            email_verified: None,
+            roles: Vec::new(),
+            credential: None,
+        };
+        let yaml = serde_yaml::to_string(&user).expect("serialize");
+        assert!(!yaml.contains("credential"));
+    }
 
     #[test]
     fn blueprint_yaml_round_trip() {
@@ -316,6 +420,11 @@ mod tests {
                 lastname: None,
                 email_verified: Some(true),
                 roles: vec!["admin".to_owned()],
+                credential: Some(PasswordCredentialBlueprint {
+                    algorithm: "bcrypt".to_owned(),
+                    secret_data: BCRYPT_HASH.to_owned(),
+                    hash_iterations: 10,
+                }),
             }],
         };
 

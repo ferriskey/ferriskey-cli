@@ -65,6 +65,11 @@ pub fn apply_blueprint(
         report.client_roles_created = blueprint.clients.iter().map(|c| c.roles.len()).sum();
         report.users_created = blueprint.users.len();
         report.role_assignments = blueprint.users.iter().map(|u| u.roles.len()).sum();
+        report.passwords_imported = blueprint
+            .users
+            .iter()
+            .filter(|u| u.credential.is_some())
+            .count();
         return Ok(report);
     }
 
@@ -449,6 +454,23 @@ pub fn apply_blueprint(
 
         let Some(user_id) = user_id else { continue };
 
+        if let Some(credential) = &user.credential {
+            match client.import_password_credential(realm, &user_id, &credential.to_request()) {
+                Ok(()) => report.passwords_imported += 1,
+                Err(e) if is_conflict(&e) => {
+                    report.already_present += 1;
+                    report.warnings.push(format!(
+                        "user '{}' already has a password, keeping it",
+                        user.username
+                    ));
+                }
+                Err(e) => report.warnings.push(format!(
+                    "could not import the password of user '{}': {e}",
+                    user.username
+                )),
+            }
+        }
+
         // A second assignment of a role the user already holds is a duplicate
         // write server-side, so an existing user's roles are read first.
         let assigned_roles: HashSet<String> = if user_existed && !user.roles.is_empty() {
@@ -737,6 +759,7 @@ mod tests {
                 lastname: None,
                 email_verified: None,
                 roles: vec!["admin".to_owned()],
+                credential: None,
             }],
         }
     }
@@ -760,6 +783,26 @@ mod tests {
         assert_eq!(report.users_created, 1);
         assert_eq!(report.role_assignments, 1);
         assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn dry_run_counts_the_passwords_it_would_import() {
+        let mut bp = sample_blueprint();
+        bp.users[0].credential = Some(crate::import::PasswordCredentialBlueprint {
+            algorithm: "bcrypt".to_owned(),
+            secret_data: "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy".to_owned(),
+            hash_iterations: 10,
+        });
+        let client = FerriskeyClient::new("http://localhost:3333", "", "").unwrap();
+        let report = apply_blueprint(&client, &bp, true).unwrap();
+        assert_eq!(report.passwords_imported, 1);
+    }
+
+    #[test]
+    fn dry_run_counts_no_password_when_the_blueprint_carries_none() {
+        let client = FerriskeyClient::new("http://localhost:3333", "", "").unwrap();
+        let report = apply_blueprint(&client, &sample_blueprint(), true).unwrap();
+        assert_eq!(report.passwords_imported, 0);
     }
 
     #[test]
