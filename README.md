@@ -39,15 +39,93 @@ Supabase has no realm and no OIDC client, so the import carries **users and
 their roles**, and nothing else. The realm name comes from `--target-realm` (or
 `--source-realm`) and defaults to `supabase`.
 
-**Passwords are not migrated.** Supabase keeps bcrypt hashes in
-`auth.users.encrypted_password` and does not serve them over the Admin API, and
-the FerrisKey API accepts only a plaintext password — neither side exposes a
-hash. Imported users arrive without credentials and have to go through a
-password reset.
-
 Usernames are derived from the full email address, falling back to the phone
 number and then to the Supabase user id, since Supabase users have no username
 of their own.
+
+#### Passwords
+
+Passwords are carried over when `--source-passwords` points at a CSV export of
+the `auth.users` table:
+
+    ferris-ctl realm import \
+      --from supabase \
+      --source-url https://<project>.supabase.co \
+      --source-token <service_role key> \
+      --source-passwords ./auth_users.csv \
+      --target-realm my-realm
+
+The export is needed because the Auth Admin API never serves password hashes:
+they live only in `auth.users.encrypted_password`.
+
+##### Producing the export
+
+From the dashboard **SQL editor**, run the query and use the download button
+above the results:
+
+    select id, encrypted_password from auth.users;
+
+Or with `psql`, which is the better option on a large directory:
+
+    psql "<connection string>" -c \
+      "\copy (select id, encrypted_password from auth.users) to 'auth_users.csv' with (format csv, header)"
+
+The connection string sits behind the project's **Connect** button. Pick the
+**Session pooler** one if your machine has no IPv6: the direct connection
+(`db.<project-ref>.supabase.co:5432`) is IPv6-only unless the project has the
+IPv4 add-on, while the pooler is IPv4 on every plan.
+
+The backslash in `\copy` is not cosmetic. `\copy` is a psql command and writes
+the file on *your* machine; a plain `COPY … TO` is a server-side statement that
+a managed Supabase instance will not let you run.
+
+If neither route is open to you — permissions, or a directory too large to pull
+yourself — Supabase support can produce the `auth.users` export on request.
+
+##### What the CLI reads from it
+
+Only `id` and `encrypted_password`, and extra columns are ignored — a plain
+`select *` export works as-is, so an export you already have need not be redone.
+A UTF-8 BOM on the header line is tolerated, which the SQL editor's download
+emits.
+
+Rows are joined onto users by `auth.users.id`, never by email: an email is
+nullable in Supabase and is therefore not a key.
+
+**The file holds every password hash in the directory.** bcrypt is slow to
+attack, but this is still authentication material: keep the file to yourself,
+and delete it once the import has run.
+
+FerrisKey stores the bcrypt hash verbatim and re-encodes it as argon2id on the
+user's first successful login, so the migration is invisible to the end user and
+leaves nothing legacy behind.
+
+A hash FerrisKey would refuse never leaves the CLI. It is skipped with a note
+naming the account, and the import carries on:
+
+| Skipped | Why |
+|---------|-----|
+| A prefix other than `$2a$`, `$2b$`, `$2y$` | FerrisKey accepts no other bcrypt variant, and `$2x$` is a known-broken one |
+| A cost outside `4..=14` | Outside the window FerrisKey accepts on import |
+| A hash body that is not 53 characters | Truncated in the export |
+| An empty `encrypted_password` | Not an error: the account signs in through a federated provider and has no password |
+
+Argon2 and Firebase-scrypt hashes — which a project that itself imported users
+into Supabase may hold — are **not** carried over yet, even though FerrisKey
+accepts argon2. Those accounts need a password reset.
+
+A user who already has a password in FerrisKey keeps it: the import reports the
+clash in `already present` rather than overwriting a credential somebody set
+deliberately.
+
+`--dry-run` prints the password **count** and replaces every hash with
+`<redacted>` in its `-o json` / `-o yaml` output, so a preview can be pasted into
+a ticket without leaking the directory's credentials.
+
+`--source-passwords` only applies to `--from supabase`; passing it to another
+source is an error rather than a silently ignored flag. Like the account filters
+below, it is never stored in a saved source — carrying passwords is a per-run
+decision.
 
 #### Roles
 

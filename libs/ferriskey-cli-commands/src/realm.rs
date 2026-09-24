@@ -145,14 +145,14 @@ pub enum ImportSource {
     /// A live Zitadel instance, read through its Management API.
     Zitadel,
     /// A Supabase project, read through its Auth (GoTrue) Admin API. Users
-    /// only: Supabase has no client or role catalogue, and passwords cannot be
-    /// carried over (neither side exposes a hash, so imported users need a
-    /// password reset).
+    /// only: Supabase has no client or role catalogue. Password hashes are
+    /// carried over when `--source-passwords` points at a CSV export of
+    /// `auth.users`; without it, imported users need a password reset.
     Supabase,
 }
 
 /// Arguments for `realm import`.
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub struct RealmImportArgs {
     /// Source kind to import from. Optional when `--source-ref` is given (the
     /// kind is then read from the stored source).
@@ -209,6 +209,31 @@ pub struct RealmImportArgs {
     /// Dropped by default.
     #[arg(long = "source-include-unconfirmed", default_value_t = false)]
     pub source_include_unconfirmed: bool,
+
+    /// Carry Supabase passwords over, read from a CSV export of `auth.users`.
+    ///
+    /// The Auth (GoTrue) Admin API never serves password hashes, so an export of
+    /// the table is the only way to get them. Produce it with psql — the
+    /// connection string is behind the project's "Connect" button, and the
+    /// backslash matters, since a plain COPY TO would write on the server:
+    ///
+    ///   psql "<connection string>" -c \
+    ///     "\copy (select id, encrypted_password from auth.users) to 'auth_users.csv' with (format csv, header)"
+    ///
+    /// Or run `select id, encrypted_password from auth.users;` in the dashboard
+    /// SQL editor and use the download button above the results.
+    ///
+    /// Only `id` and `encrypted_password` are read and extra columns are ignored,
+    /// so a plain `select *` export works too. Rows join onto users by
+    /// `auth.users.id`, never by email.
+    ///
+    /// The file holds every password hash in the directory: keep it to yourself
+    /// and delete it once the import has run.
+    ///
+    /// Only bcrypt hashes FerrisKey accepts are imported; every other account
+    /// arrives without credentials and needs a password reset.
+    #[arg(long = "source-passwords", value_name = "FILE", verbatim_doc_comment)]
+    pub source_passwords: Option<PathBuf>,
 
     /// Override the name of the realm created in FerrisKey (defaults to the source realm name).
     #[arg(long = "target-realm")]

@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 base64 = "0.22"
+csv = "1.3"
 ctrlc = "3.4"
 ferriskey-cli-client = { path = "../ferriskey-cli-client", version = "0.3.0" }
 ferriskey-cli-commands = { path = "../ferriskey-cli-commands", version = "0.3.0" }

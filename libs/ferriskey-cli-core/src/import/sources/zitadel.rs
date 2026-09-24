@@ -220,6 +220,7 @@ fn map_human(user_name: String, human: Human) -> UserBlueprint {
         lastname: profile.last_name,
         email_verified: email.is_email_verified,
         roles: Vec::new(),
+        credential: None,
     }
 }
 

@@ -1,9 +1,11 @@
 use std::collections::{BTreeSet, HashSet};
+use std::path::PathBuf;
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
+use crate::import::sources::supabase_passwords::PasswordCatalogue;
 use crate::import::{ImportError, RealmBlueprint, RealmSource, RoleBlueprint, UserBlueprint};
 
 const SOURCE: &str = "supabase";
@@ -43,6 +45,7 @@ pub struct SupabaseSource {
     service_role_key: String,
     realm_name: Option<String>,
     filters: UserFilters,
+    passwords: PasswordCatalogue,
     http: Client,
 }
 
@@ -52,16 +55,22 @@ impl SupabaseSource {
         service_role_key: Option<String>,
         realm_name: Option<String>,
         filters: UserFilters,
+        passwords_export: Option<PathBuf>,
     ) -> Result<Self, ImportError> {
         let base_url =
             normalize_base_url(&base_url.ok_or(ImportError::MissingArg("--source-url"))?);
         let service_role_key = service_role_key.ok_or(ImportError::MissingArg("--source-token"))?;
+        let passwords = match passwords_export {
+            Some(path) => PasswordCatalogue::from_csv(&path)?,
+            None => PasswordCatalogue::default(),
+        };
 
         Ok(Self {
             base_url,
             service_role_key,
             realm_name,
             filters,
+            passwords,
             http: Client::new(),
         })
     }
@@ -104,7 +113,7 @@ impl SupabaseSource {
                     continue;
                 }
                 if self.filters.keeps(&user) {
-                    users.push(map_user(user)?);
+                    users.push(map_user(user, &self.passwords)?);
                 }
             }
 
@@ -125,6 +134,16 @@ impl RealmSource for SupabaseSource {
             .unwrap_or_else(|| DEFAULT_REALM_NAME.to_owned());
         let users = self.all_users()?;
 
+        for warning in self.passwords.warnings() {
+            eprintln!("note: {warning}");
+        }
+        if self.passwords.without_password() > 0 {
+            eprintln!(
+                "note: {} supabase accounts carry no password hash (federated sign-in) and arrive without credentials",
+                self.passwords.without_password()
+            );
+        }
+
         Ok(vec![RealmBlueprint {
             name,
             settings: None,
@@ -142,7 +161,10 @@ fn normalize_base_url(url: &str) -> String {
         .to_owned()
 }
 
-fn map_user(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
+fn map_user(
+    user: SupabaseUser,
+    passwords: &PasswordCatalogue,
+) -> Result<UserBlueprint, ImportError> {
     let (firstname, lastname) = names_from_metadata(&user.user_metadata);
     let email_verified = user
         .email
@@ -154,6 +176,7 @@ fn map_user(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
         .or_else(|| user.phone.clone())
         .unwrap_or_else(|| user.id.clone());
     let roles = roles_from_metadata(&user.app_metadata, &username)?;
+    let credential = passwords.get(&user.id);
 
     Ok(UserBlueprint {
         username,
@@ -162,6 +185,7 @@ fn map_user(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
         lastname,
         email_verified,
         roles,
+        credential,
     })
 }
 
@@ -339,12 +363,71 @@ mod tests {
             lastname: None,
             email_verified: Some(true),
             roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+            credential: None,
         }
+    }
+
+    fn mapped(user: SupabaseUser) -> Result<UserBlueprint, ImportError> {
+        map_user(user, &PasswordCatalogue::default())
+    }
+
+    const BCRYPT_HASH: &str = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+    fn catalogue_for(id: &str) -> PasswordCatalogue {
+        PasswordCatalogue::from_reader(
+            format!("id,encrypted_password\n{id},{BCRYPT_HASH}\n")
+                .into_bytes()
+                .as_slice(),
+            "users.csv",
+        )
+        .expect("load")
+    }
+
+    #[test]
+    fn joins_a_password_onto_the_user_by_supabase_id() {
+        let blueprint = map_user(
+            confirmed_email_user("id-20", "alice@acme.test"),
+            &catalogue_for("id-20"),
+        )
+        .expect("map");
+        let credential = blueprint.credential.expect("credential");
+        assert_eq!(credential.algorithm, "bcrypt");
+        assert_eq!(credential.secret_data, BCRYPT_HASH);
+        assert_eq!(credential.hash_iterations, 10);
+    }
+
+    #[test]
+    fn joins_on_the_id_rather_than_the_email() {
+        let blueprint = map_user(
+            confirmed_email_user("id-21", "alice@acme.test"),
+            &catalogue_for("alice@acme.test"),
+        )
+        .expect("map");
+        assert!(
+            blueprint.credential.is_none(),
+            "the export is keyed by auth.users.id; an email is not a join key"
+        );
+    }
+
+    #[test]
+    fn leaves_a_user_without_credential_when_the_export_has_no_row_for_it() {
+        let blueprint = map_user(
+            confirmed_email_user("id-22", "bob@acme.test"),
+            &catalogue_for("id-20"),
+        )
+        .expect("map");
+        assert!(blueprint.credential.is_none());
+    }
+
+    #[test]
+    fn carries_no_credential_when_no_export_was_given() {
+        let blueprint = mapped(confirmed_email_user("id-23", "alice@acme.test")).expect("map");
+        assert!(blueprint.credential.is_none());
     }
 
     #[test]
     fn uses_the_full_email_as_username() {
-        let blueprint = map_user(confirmed_email_user("id-1", "alice@acme.test")).expect("map");
+        let blueprint = mapped(confirmed_email_user("id-1", "alice@acme.test")).expect("map");
         assert_eq!(blueprint.username, "alice@acme.test");
         assert_eq!(blueprint.email.as_deref(), Some("alice@acme.test"));
         assert_eq!(blueprint.email_verified, Some(true));
@@ -352,7 +435,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_phone_when_there_is_no_email() {
-        let blueprint = map_user(SupabaseUser {
+        let blueprint = mapped(SupabaseUser {
             phone: Some("+33612345678".to_owned()),
             ..user("id-2")
         })
@@ -363,13 +446,13 @@ mod tests {
 
     #[test]
     fn falls_back_to_the_supabase_id_when_there_is_neither() {
-        let blueprint = map_user(user("8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11")).expect("map");
+        let blueprint = mapped(user("8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11")).expect("map");
         assert_eq!(blueprint.username, "8f14e45f-ceea-467a-9ba3-6a1e8a1f0c11");
     }
 
     #[test]
     fn reports_an_unverified_email_as_unverified() {
-        let blueprint = map_user(SupabaseUser {
+        let blueprint = mapped(SupabaseUser {
             email: Some("bob@acme.test".to_owned()),
             ..user("id-3")
         })
@@ -379,7 +462,7 @@ mod tests {
 
     #[test]
     fn leaves_verification_unset_when_there_is_no_email() {
-        let blueprint = map_user(SupabaseUser {
+        let blueprint = mapped(SupabaseUser {
             phone: Some("+33612345678".to_owned()),
             ..user("id-4")
         })
@@ -519,7 +602,7 @@ mod tests {
 
     #[test]
     fn maps_metadata_names_onto_the_blueprint() {
-        let blueprint = map_user(SupabaseUser {
+        let blueprint = mapped(SupabaseUser {
             user_metadata: metadata(&[("full_name", "Alice Doe")]),
             ..confirmed_email_user("id-13", "alice@acme.test")
         })
@@ -600,7 +683,7 @@ mod tests {
 
     #[test]
     fn carries_roles_onto_the_user_blueprint() {
-        let blueprint = map_user(SupabaseUser {
+        let blueprint = mapped(SupabaseUser {
             app_metadata: json_metadata(r#"{"provider":"email","roles":["admin"]}"#),
             ..confirmed_email_user("id-15", "alice@acme.test")
         })
@@ -610,7 +693,7 @@ mod tests {
 
     #[test]
     fn imports_no_roles_when_app_metadata_names_none() {
-        let blueprint = map_user(confirmed_email_user("id-14", "alice@acme.test")).expect("map");
+        let blueprint = mapped(confirmed_email_user("id-14", "alice@acme.test")).expect("map");
         assert!(blueprint.roles.is_empty());
     }
 
@@ -660,8 +743,13 @@ mod tests {
 
     #[test]
     fn requires_a_url_and_a_key() {
-        let missing_url =
-            SupabaseSource::build(None, Some("key".to_owned()), None, UserFilters::default());
+        let missing_url = SupabaseSource::build(
+            None,
+            Some("key".to_owned()),
+            None,
+            UserFilters::default(),
+            None,
+        );
         assert!(matches!(
             missing_url,
             Err(ImportError::MissingArg("--source-url"))
@@ -672,6 +760,7 @@ mod tests {
             None,
             None,
             UserFilters::default(),
+            None,
         );
         assert!(matches!(
             missing_key,

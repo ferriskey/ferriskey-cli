@@ -12,7 +12,9 @@ use thiserror::Error;
 
 use crate::confirm::{self, confirm};
 use crate::config::{ConfigError, FileContextRepository, StoredContext};
-use crate::import::{self, ImportReport, RealmBlueprint};
+use crate::import::{
+    self, ImportReport, PasswordCredentialBlueprint, RealmBlueprint, UserBlueprint,
+};
 use crate::session::{self, SessionError};
 
 type Result<T> = std::result::Result<T, RealmCommandError>;
@@ -376,23 +378,51 @@ fn render_blueprints(output_format: &str, blueprints: &[RealmBlueprint]) -> Resu
                 if index > 0 {
                     println!();
                 }
-                println!("realm:    {}", blueprint.name);
+                println!("realm:     {}", blueprint.name);
                 println!(
-                    "settings: {}",
+                    "settings:  {}",
                     if blueprint.settings.is_some() { "yes" } else { "no" }
                 );
-                println!("roles:    {}", blueprint.roles.len());
-                println!("clients:  {}", blueprint.clients.len());
-                println!("users:    {}", blueprint.users.len());
+                println!("roles:     {}", blueprint.roles.len());
+                println!("clients:   {}", blueprint.clients.len());
+                println!("users:     {}", blueprint.users.len());
+                println!(
+                    "passwords: {}",
+                    blueprint
+                        .users
+                        .iter()
+                        .filter(|user| user.credential.is_some())
+                        .count()
+                );
             }
             Ok(())
         }
-        "json" => render_json(blueprints),
-        "yaml" => render_yaml(blueprints),
+        "json" => render_json(&redact_secrets(blueprints)),
+        "yaml" => render_yaml(&redact_secrets(blueprints)),
         _ => Err(RealmCommandError::UnsupportedOutputFormat(
             output_format.to_owned(),
         )),
     }
+}
+
+fn redact_secrets(blueprints: &[RealmBlueprint]) -> Vec<RealmBlueprint> {
+    blueprints
+        .iter()
+        .map(|blueprint| RealmBlueprint {
+            users: blueprint
+                .users
+                .iter()
+                .map(|user| UserBlueprint {
+                    credential: user
+                        .credential
+                        .as_ref()
+                        .map(PasswordCredentialBlueprint::redacted),
+                    ..user.clone()
+                })
+                .collect(),
+            ..blueprint.clone()
+        })
+        .collect()
 }
 
 fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
@@ -420,6 +450,8 @@ fn render_reports(output_format: &str, reports: &[ImportReport]) -> Result<()> {
                 println!("  client roles created: {}", report.client_roles_created);
                 println!("  users created:        {}", report.users_created);
                 println!("  role assignments:     {}", report.role_assignments);
+                println!("  passwords imported:   {}", report.passwords_imported);
+                println!("  passwords failed:     {}", report.passwords_failed);
                 println!("  already present:      {}", report.already_present);
                 if !report.client_secrets.is_empty() {
                     println!("  client secrets:");
@@ -636,6 +668,52 @@ mod tests {
     use super::*;
     use crate::config::StoredContext;
     use ferriskey_cli_client::Realm;
+
+    const BCRYPT_HASH: &str = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+    fn blueprint_with_password() -> Vec<RealmBlueprint> {
+        vec![RealmBlueprint {
+            name: "acme".to_owned(),
+            users: vec![UserBlueprint {
+                username: "alice".to_owned(),
+                email: None,
+                firstname: None,
+                lastname: None,
+                email_verified: None,
+                roles: Vec::new(),
+                credential: Some(PasswordCredentialBlueprint {
+                    algorithm: "bcrypt".to_owned(),
+                    secret_data: BCRYPT_HASH.to_owned(),
+                    hash_iterations: 10,
+                }),
+            }],
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn serialized_dry_run_output_never_carries_a_password_hash() {
+        let rendered =
+            serde_yaml::to_string(&redact_secrets(&blueprint_with_password())).expect("serialize");
+        assert!(!rendered.contains(BCRYPT_HASH));
+        assert!(!rendered.contains("N9qo8uLOickgx2ZMRZoMye"));
+        assert!(rendered.contains("bcrypt"));
+        assert!(rendered.contains("hash_iterations"));
+    }
+
+    #[test]
+    fn redacting_leaves_the_rest_of_the_blueprint_alone() {
+        let redacted = redact_secrets(&blueprint_with_password());
+        assert_eq!(redacted[0].name, "acme");
+        assert_eq!(redacted[0].users[0].username, "alice");
+    }
+
+    #[test]
+    fn redacting_keeps_a_user_without_credential_untouched() {
+        let mut blueprints = blueprint_with_password();
+        blueprints[0].users[0].credential = None;
+        assert!(redact_secrets(&blueprints)[0].users[0].credential.is_none());
+    }
 
     fn make_context(realm: Option<&str>) -> StoredContext {
         StoredContext {
