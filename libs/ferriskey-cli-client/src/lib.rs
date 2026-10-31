@@ -87,6 +87,8 @@ pub struct JwtToken {
     pub access_token: String,
     pub expires_in: i32,
     pub id_token: Option<String>,
+    // Absent from client_credentials responses (RFC 6749 §4.4.3).
+    #[serde(default)]
     pub refresh_token: String,
     pub token_type: String,
     #[serde(default)]
@@ -1129,5 +1131,14 @@ mod tests {
         let payload: ClientSecretPayload =
             serde_json::from_str(r#"{"data":{"client_secret":"s3cr3t"}}"#).unwrap();
         assert_eq!(payload.into_secret(), "s3cr3t");
+    }
+
+    #[test]
+    fn jwt_token_accepts_client_credentials_response_without_refresh_token() {
+        let token: JwtToken =
+            serde_json::from_str(r#"{"access_token":"a","token_type":"Bearer","expires_in":300}"#)
+                .unwrap();
+        assert_eq!(token.access_token, "a");
+        assert!(token.refresh_token.is_empty());
     }
 }
