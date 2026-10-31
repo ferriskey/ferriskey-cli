@@ -394,6 +394,11 @@ fn render_blueprints(output_format: &str, blueprints: &[RealmBlueprint]) -> Resu
                         .filter(|user| user.credential.is_some())
                         .count()
                 );
+                let mappings = role_mappings(blueprint);
+                println!("role mappings: {}", mappings.len());
+                for (username, role) in mappings {
+                    println!("  {username} -> {role}");
+                }
             }
             Ok(())
         }
@@ -403,6 +408,18 @@ fn render_blueprints(output_format: &str, blueprints: &[RealmBlueprint]) -> Resu
             output_format.to_owned(),
         )),
     }
+}
+
+fn role_mappings(blueprint: &RealmBlueprint) -> Vec<(&str, &str)> {
+    blueprint
+        .users
+        .iter()
+        .flat_map(|user| {
+            user.roles
+                .iter()
+                .map(|role| (user.username.as_str(), role.as_str()))
+        })
+        .collect()
 }
 
 fn redact_secrets(blueprints: &[RealmBlueprint]) -> Vec<RealmBlueprint> {
@@ -700,6 +717,17 @@ mod tests {
         assert!(!rendered.contains("N9qo8uLOickgx2ZMRZoMye"));
         assert!(rendered.contains("bcrypt"));
         assert!(rendered.contains("hash_iterations"));
+    }
+
+    #[test]
+    fn lists_every_role_mapping_of_every_user() {
+        let mut blueprints = blueprint_with_password();
+        blueprints[0].users[0].roles = vec!["admin".to_owned(), "web:viewer".to_owned()];
+        assert_eq!(
+            role_mappings(&blueprints[0]),
+            vec![("alice", "admin"), ("alice", "web:viewer")]
+        );
+        assert!(render_blueprints("table", &blueprints).is_ok());
     }
 
     #[test]
