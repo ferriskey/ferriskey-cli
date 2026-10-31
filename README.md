@@ -24,6 +24,27 @@ nor authentication, so it is the cheapest way to check a mapping.
 An import converges: re-running it skips what the realm already has rather than
 failing or duplicating.
 
+### Keycloak
+
+Reads a realm through the Admin REST API: realm settings, clients, realm and
+client roles, and users.
+
+Each user's role mappings are read from `/users/{id}/role-mappings` and assigned
+in FerrisKey, realm roles and client roles alike. Only the roles a user holds
+directly are read: composite roles are not expanded and roles inherited from a
+group are not copied onto the user.
+
+A mapping to a role the import does not create is skipped and reported on stderr
+with the user and the role. That covers a realm role whose name contains `:` and
+a client whose id contains `:` (for example a URN): a blueprint reserves `:` as
+the separator in `client_id:role_name`, so those mappings cannot be written down.
+
+A re-run adds the mappings a user is missing and removes none, so a role granted
+in FerrisKey since the first import stays. `--dry-run` lists each mapping as
+`user -> role` (`-o json` / `-o yaml` print them in each user's `roles`).
+
+Passwords are not exported by Keycloak, so users arrive without credentials.
+
 ### Supabase
 
 Reads a project through its Auth (GoTrue) Admin API, authenticating with the
