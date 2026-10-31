@@ -121,8 +121,7 @@ impl RealmSource for KeycloakSource {
             .into_iter()
             .map(|client| {
                 let client_roles: Vec<RoleBlueprint> = self
-                    .get::<Vec<KcRole>>(&token, &format!("/clients/{}/roles", client.id))
-                    .unwrap_or_default()
+                    .get::<Vec<KcRole>>(&token, &format!("/clients/{}/roles", client.id))?
                     .into_iter()
                     .map(map_role)
                     .collect();
@@ -131,9 +130,9 @@ impl RealmSource for KeycloakSource {
                         .clients
                         .insert((client.client_id.clone(), role.name.clone()));
                 }
-                map_client(client, client_roles)
+                Ok(map_client(client, client_roles))
             })
-            .collect();
+            .collect::<Result<Vec<_>, ImportError>>()?;
 
         let mut users = Vec::new();
         let mut first = 0;
