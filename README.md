@@ -230,3 +230,7 @@ Connection details can be stored once and referenced by name:
 Inline `--source-*` flags override individual fields of a stored source. The
 Supabase account filters above are deliberately not stored: they are per-run
 choices, so a saved source can never silently widen a later import.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
